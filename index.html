@@ -1,0 +1,163 @@
+<!--
+  Steem Vue Template
+  A minimal SPA template using steem-js, Steem Keychain, Vue 3 CDN, and Vue Router 4.
+  Based on the Reversteem project structure.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data:; frame-src 'self'; connect-src 'self' https://api.steemit.com https://api.justyy.com https://steemd.steemworld.org https://api.steem.fans;" />
+  <title>SteemTwist 🌀</title>
+
+  <!-- Steem JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@steemit/steem-js@0.8.0/dist/steem.min.js" integrity="sha256-YXzRDre5WLBe0GW31xpG8482t5CeYqtg5SitXO1rgUA=" crossorigin="anonymous"></script>
+
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3.5.31/dist/vue.global.js" integrity="sha256-cr1UaSE51jpGqNcuvoBym1n+PGtWFY2TGxYSSJMVFk0=" crossorigin="anonymous"></script>
+
+  <!-- Vue Router 4 -->
+  <script src="https://unpkg.com/vue-router@4.6.4/dist/vue-router.global.js" integrity="sha256-p5CN9Rlm5VT7vZWXRqaXJf+lHl6gIaBMb2RdCB0kwLA=" crossorigin="anonymous"></script>
+
+  <!-- marked.js — Markdown renderer -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js" integrity="sha256-YAKvY0hbBD+mDdq6GzQ2O5jSqLLGO2BwBPOiQFqKBTo=" crossorigin="anonymous"></script>
+
+  <!-- DOMPurify — HTML sanitizer used by the Live Twist sandbox -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha256-wIRQlqfEpnQfNirFBslMHH0n3GA7zBv2Slh/dvLb46E=" crossorigin="anonymous"></script>
+
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────────────
+       Derived from the SteemTwist cover image gradient:
+       left  #1a3af5 (deep blue)  →  centre #8b2fc9 (purple)  →  right #e0187a (pink)
+       Accent: cyan #22d3ee  |  light-purple #a855f7  |  pink #ec4899
+    ─────────────────────────────────────────────────────────────────────── */
+    :root {
+      --bg:           #0f0a1e;
+      --surface:      #1a1030;
+      --card:         #1e1535;
+      --card-border:  #2e2050;
+      --grad-start:   #1a3af5;
+      --grad-mid:     #8b2fc9;
+      --grad-end:     #e0187a;
+      --accent:       #a855f7;
+      --accent-cyan:  #22d3ee;
+      --accent-pink:  #ec4899;
+      --text:         #e8e0f0;
+      --text-muted:   #9b8db0;
+      --text-faint:   #5a4e70;
+      --green-hi:     #4ade80;
+      --green-lo:     #166534;
+    }
+
+    body {
+      font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+
+    h1 { margin-top: 20px; }
+
+    /* Global button baseline — overridden per-component via inline styles */
+    button {
+      padding: 8px 14px;
+      margin: 5px;
+      border-radius: 20px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--grad-mid), var(--grad-end));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    button:hover   { opacity: 0.88; }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    hr { margin: 30px 0; border: none; border-top: 1px solid var(--card-border); }
+
+    /* Nav active state */
+    .nav-active {
+      text-decoration: underline !important;
+      color: var(--accent-cyan) !important;
+    }
+
+    /* Notification banners */
+    .notification {
+      margin: 10px auto;
+      padding: 10px 14px;
+      border-radius: 10px;
+      max-width: 600px;
+      font-size: 14px;
+    }
+    .notification.error   { background:#2d0a0a; border:1px solid #7f1d1d; color:#fca5a5; }
+    .notification.success { background:#0a2d12; border:1px solid #166534; color:#86efac; }
+    .notification.info    { background:#0a1a2d; border:1px solid #1e3a5f; color:#93c5fd; }
+
+    .keychain-notice {
+      margin: 10px auto;
+      padding: 10px 14px;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text-muted);
+      max-width: 600px;
+      font-size: 14px;
+    }
+
+    /* Markdown inside twist cards */
+    .twist-body { font-size: 15px; line-height: 1.6; word-break: break-word; color: var(--text); }
+    .twist-body p            { margin: 0 0 8px; }
+    .twist-body p:last-child { margin-bottom: 0; }
+    .twist-body h1, .twist-body h2, .twist-body h3
+                             { font-size: 1em; font-weight: bold; margin: 6px 0 4px; color: var(--accent); }
+    .twist-body ul, .twist-body ol { margin: 4px 0 8px 20px; padding: 0; }
+    .twist-body li           { margin-bottom: 2px; }
+    .twist-body code         { background: var(--bg); border-radius: 4px; padding: 1px 5px;
+                               font-size: 13px; color: var(--accent-cyan); border: 1px solid var(--card-border); }
+    .twist-body pre          { background: var(--bg); border-radius: 8px; padding: 10px;
+                               overflow-x: auto; border: 1px solid var(--card-border); }
+    .twist-body pre code     { background: none; padding: 0; border: none; }
+    .twist-body blockquote   { border-left: 3px solid var(--accent); margin: 6px 0;
+                               padding: 4px 10px; color: var(--text-muted); }
+    .twist-body a            { color: var(--accent-cyan); }
+    .twist-body img          { max-width: 100%; border-radius: 8px; margin-top: 6px; }
+
+    /* README / About page */
+    .readme-body           { font-size: 15px; line-height: 1.7; color: var(--text); }
+    .readme-body h1        { font-size: 1.6em; border-bottom: 2px solid var(--card-border);
+                             padding-bottom: 6px; margin-bottom: 12px; color: var(--accent); }
+    .readme-body h2        { font-size: 1.3em; border-bottom: 1px solid var(--card-border);
+                             padding-bottom: 4px; margin: 24px 0 10px; color: var(--accent); }
+    .readme-body h3        { font-size: 1.1em; margin: 18px 0 8px; color: var(--text); }
+    .readme-body table     { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0; }
+    .readme-body th        { background: var(--surface); text-align: left;
+                             padding: 7px 10px; border: 1px solid var(--card-border); color: var(--accent); }
+    .readme-body td        { padding: 6px 10px; border: 1px solid var(--card-border); }
+    .readme-body hr        { border: none; border-top: 1px solid var(--card-border); margin: 20px 0; }
+    .readme-body code      { background: var(--bg); border-radius: 4px; padding: 1px 5px;
+                             font-size: 13px; color: var(--accent-cyan); border: 1px solid var(--card-border); }
+    .readme-body pre       { background: var(--bg); border-radius: 8px; padding: 10px;
+                             overflow-x: auto; border: 1px solid var(--card-border); }
+    .readme-body a         { color: var(--accent-cyan); }
+
+    /* Firehose new-twist flash — cyan highlight matching theme */
+    @keyframes twistFlash {
+      0%   { background-color: #0e2233; }
+      100% { background-color: var(--card); }
+    }
+    .twist-flash { animation: twistFlash 2.5s ease-out forwards; }
+
+    /* Spinner colour */
+    .spin-ring { border-top-color: var(--accent) !important; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="blockchain.js"></script>
+  <script src="components.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
