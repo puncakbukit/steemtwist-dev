@@ -396,7 +396,7 @@ function keychainLogin(username, callback) {
 
 // Upload a single image to Steemit ImageHoster using a Keychain posting-key signature.
 // callback receives: { success: true, url } or { success: false, error }
-function uploadImageToSteemit(username, file, callback) {
+async function uploadImageToSteemit(username, file, callback) {
   if (!username) return callback({ success: false, error: "Please sign in first." });
   if (!file) return callback({ success: false, error: "Please choose an image file." });
   if (!window.steem_keychain) return callback({ success: false, error: "Steem Keychain not installed." });
@@ -407,8 +407,23 @@ function uploadImageToSteemit(username, file, callback) {
     return callback({ success: false, error: "Image too large. Max size is 5 MB." });
   }
 
-  const challenge = "Image upload " + Date.now();
-  steem_keychain.requestSignBuffer(username, challenge, "Posting", async (signRes) => {
+  // ImageHoster expects a signature over:
+  // sha256("ImageSigningChallenge" + <raw file bytes>)
+  // Keychain's requestSignBuffer internally signs sha256(message), so we pass
+  // a Buffer-like JSON string of the exact concatenated bytes.
+  let signableBufferJson = "";
+  try {
+    const fileBytes = new Uint8Array(await file.arrayBuffer());
+    const prefix = new TextEncoder().encode("ImageSigningChallenge");
+    const merged = new Uint8Array(prefix.length + fileBytes.length);
+    merged.set(prefix, 0);
+    merged.set(fileBytes, prefix.length);
+    signableBufferJson = JSON.stringify({ type: "Buffer", data: Array.from(merged) });
+  } catch (e) {
+    return callback({ success: false, error: "Could not read image bytes for signing." });
+  }
+
+  steem_keychain.requestSignBuffer(username, signableBufferJson, "Posting", async (signRes) => {
     if (!signRes || !signRes.success || !signRes.result) {
       return callback({ success: false, error: (signRes && (signRes.error || signRes.message)) || "Signature failed." });
     }
