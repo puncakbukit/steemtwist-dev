@@ -394,6 +394,46 @@ function keychainLogin(username, callback) {
   );
 }
 
+// Upload a single image to Steemit ImageHoster using a Keychain posting-key signature.
+// callback receives: { success: true, url } or { success: false, error }
+function uploadImageToSteemit(username, file, callback) {
+  if (!username) return callback({ success: false, error: "Please sign in first." });
+  if (!file) return callback({ success: false, error: "Please choose an image file." });
+  if (!window.steem_keychain) return callback({ success: false, error: "Steem Keychain not installed." });
+  if (!String(file.type || "").startsWith("image/")) {
+    return callback({ success: false, error: "Only image files are allowed." });
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    return callback({ success: false, error: "Image too large. Max size is 5 MB." });
+  }
+
+  const challenge = "Image upload " + Date.now();
+  steem_keychain.requestSignBuffer(username, challenge, "Posting", async (signRes) => {
+    if (!signRes || !signRes.success || !signRes.result) {
+      return callback({ success: false, error: (signRes && (signRes.error || signRes.message)) || "Signature failed." });
+    }
+    try {
+      const formData = new FormData();
+      formData.append("image", file, file.name || "image");
+
+      const uploadUrl = "https://steemitimages.com/" + encodeURIComponent(username) + "/" + encodeURIComponent(signRes.result);
+      const response  = await fetch(uploadUrl, { method: "POST", body: formData });
+      let payload = null;
+      try { payload = await response.json(); } catch {}
+
+      if (!response.ok) {
+        return callback({ success: false, error: (payload && (payload.error || payload.message)) || ("Upload failed (" + response.status + ").") });
+      }
+      if (payload && payload.url) {
+        return callback({ success: true, url: payload.url });
+      }
+      return callback({ success: false, error: "Upload failed: missing URL in response." });
+    } catch (e) {
+      return callback({ success: false, error: e && e.message ? e.message : "Error uploading image." });
+    }
+  });
+}
+
 // ---- Utility ----
 
 // Build a unique permlink from a title string + timestamp suffix.

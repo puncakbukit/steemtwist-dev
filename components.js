@@ -3840,6 +3840,7 @@ const LiveTwistComposerComponent = {
 const TwistComposerComponent = {
   name: "TwistComposerComponent",
   components: { LiveTwistComposerComponent },
+  inject: ["notify"],
   props: {
     username:    { type: String,  default: "" },
     hasKeychain: { type: Boolean, default: false },
@@ -3851,7 +3852,9 @@ const TwistComposerComponent = {
     return {
       composerMode: draft.composerMode || "twist",
       message:      draft.message      || "",
-      previewMode:  false
+      previewMode:  false,
+      isUploadingImage: false,
+      uploadError: ""
     };
   },
   computed: {
@@ -3869,6 +3872,44 @@ const TwistComposerComponent = {
     composerMode(v) { draftStorage.save("twist_composer", { composerMode: v, message: this.message }); }
   },
   methods: {
+    insertAtCursor(text) {
+      const ta = this.$refs.twistTextarea;
+      if (!ta) {
+        this.message = (this.message ? this.message + "\n" : "") + text;
+        return;
+      }
+      const start = ta.selectionStart ?? this.message.length;
+      const end   = ta.selectionEnd ?? this.message.length;
+      this.message = this.message.slice(0, start) + text + this.message.slice(end);
+      this.$nextTick(() => {
+        ta.focus();
+        const pos = start + text.length;
+        ta.selectionStart = pos;
+        ta.selectionEnd   = pos;
+      });
+    },
+    onImageSelected(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      this.uploadImage(file);
+    },
+    uploadImage(file) {
+      if (this.isUploadingImage) return;
+      this.uploadError = "";
+      this.isUploadingImage = true;
+      uploadImageToSteemit(this.username, file, (res) => {
+        this.isUploadingImage = false;
+        if (!res.success) {
+          this.uploadError = res.error || "Image upload failed.";
+          this.notify(this.uploadError, "error");
+          return;
+        }
+        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        this.insertAtCursor(`![${alt}](${res.url})`);
+        this.notify("Image uploaded and inserted.", "success");
+      });
+    },
     submit() {
       if (!this.canPost) return;
       this.$emit("post", this.message.trim());
@@ -3941,6 +3982,7 @@ const TwistComposerComponent = {
 
         <textarea
           v-show="!previewMode"
+          ref="twistTextarea"
           v-model="message"
           placeholder="What's your twist? (markdown supported)"
           maxlength="500"
@@ -3953,6 +3995,22 @@ const TwistComposerComponent = {
           "
           @keydown.ctrl.enter="submit"
         ></textarea>
+
+        <div v-show="!previewMode" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input
+            ref="imageInput"
+            type="file"
+            accept="image/*"
+            style="display:none;"
+            @change="onImageSelected"
+          />
+          <button
+            @click="$refs.imageInput.click()"
+            :disabled="!username || !hasKeychain || isUploadingImage"
+            style="padding:6px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+          >{{ isUploadingImage ? "Uploading…" : "📷 Upload image" }}</button>
+          <span v-if="uploadError" style="font-size:12px;color:#fca5a5;">{{ uploadError }}</span>
+        </div>
 
         <div
           v-show="previewMode"
@@ -4208,6 +4266,7 @@ const UserRowComponent = {
 // Supports markdown with a Write / Preview tab toggle.
 const SecretTwistComposerComponent = {
   name: "SecretTwistComposerComponent",
+  inject: ["notify"],
   props: {
     username:    { type: String,  default: "" },
     hasKeychain: { type: Boolean, default: false },
@@ -4220,7 +4279,9 @@ const SecretTwistComposerComponent = {
     return {
       recipient:   this.toUsername || draft.recipient || "",
       message:     draft.message   || "",
-      previewMode: false
+      previewMode: false,
+      isUploadingImage: false,
+      uploadError: ""
     };
   },
   computed: {
@@ -4242,6 +4303,44 @@ const SecretTwistComposerComponent = {
     message(v)   { draftStorage.save("secret_composer", { recipient: this.recipient, message: v }); }
   },
   methods: {
+    insertAtCursor(text) {
+      const ta = this.$refs.secretTextarea;
+      if (!ta) {
+        this.message = (this.message ? this.message + "\n" : "") + text;
+        return;
+      }
+      const start = ta.selectionStart ?? this.message.length;
+      const end   = ta.selectionEnd ?? this.message.length;
+      this.message = this.message.slice(0, start) + text + this.message.slice(end);
+      this.$nextTick(() => {
+        ta.focus();
+        const pos = start + text.length;
+        ta.selectionStart = pos;
+        ta.selectionEnd   = pos;
+      });
+    },
+    onImageSelected(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      this.uploadImage(file);
+    },
+    uploadImage(file) {
+      if (this.isUploadingImage) return;
+      this.uploadError = "";
+      this.isUploadingImage = true;
+      uploadImageToSteemit(this.username, file, (res) => {
+        this.isUploadingImage = false;
+        if (!res.success) {
+          this.uploadError = res.error || "Image upload failed.";
+          this.notify(this.uploadError, "error");
+          return;
+        }
+        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        this.insertAtCursor(`![${alt}](${res.url})`);
+        this.notify("Image uploaded and inserted.", "success");
+      });
+    },
     submit() {
       if (!this.canSend) return;
       this.$emit("send", {
@@ -4312,6 +4411,7 @@ const SecretTwistComposerComponent = {
       <!-- Write mode -->
       <textarea
         v-show="!previewMode"
+        ref="secretTextarea"
         v-model="message"
         placeholder="Write your secret message… (markdown supported)"
         style="
@@ -4323,6 +4423,22 @@ const SecretTwistComposerComponent = {
         "
         @keydown.ctrl.enter="submit"
       ></textarea>
+
+      <div v-show="!previewMode" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <input
+          ref="imageInput"
+          type="file"
+          accept="image/*"
+          style="display:none;"
+          @change="onImageSelected"
+        />
+        <button
+          @click="$refs.imageInput.click()"
+          :disabled="!username || !hasKeychain || isUploadingImage"
+          style="padding:6px 12px;margin:0;background:#0f0a1e;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+        >{{ isUploadingImage ? "Uploading…" : "📷 Upload image" }}</button>
+        <span v-if="uploadError" style="font-size:12px;color:#fca5a5;">{{ uploadError }}</span>
+      </div>
 
       <!-- Preview mode -->
       <div
