@@ -422,19 +422,41 @@ function uploadImageToSteemit(username, file, callback) {
       let payload = null;
       try { payload = rawBody ? JSON.parse(rawBody) : null; } catch {}
 
-      // Steemit ImageHoster response shape can vary by deploy/version:
-      // - { url: "..." }
-      // - { secure_url: "..." }
-      // - { data: { link: "..." } }
-      // - plain-text URL
-      // - ["https://..."]
-      const extractedUrl =
-        (payload && typeof payload.url === "string" && payload.url) ||
-        (payload && typeof payload.secure_url === "string" && payload.secure_url) ||
-        (payload && payload.data && typeof payload.data.link === "string" && payload.data.link) ||
-        (Array.isArray(payload) && typeof payload[0] === "string" && payload[0]) ||
-        ((rawBody || "").trim().match(/^https?:\/\/\S+$/i)?.[0]) ||
-        "";
+      // Steemit ImageHoster response shape can vary by deploy/version.
+      // Try common keys first, then recursively scan for the first image-like URL.
+      function scanForUrl(value, depth = 0) {
+        if (depth > 6 || value == null) return "";
+        if (typeof value === "string") {
+          const direct = value.match(/https?:\/\/[^\s"'<>]+/i)?.[0] || "";
+          if (direct) return direct;
+          const md = value.match(/\((https?:\/\/[^)\s]+)\)/i)?.[1] || "";
+          if (md) return md;
+          return "";
+        }
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            const found = scanForUrl(item, depth + 1);
+            if (found) return found;
+          }
+          return "";
+        }
+        if (typeof value === "object") {
+          const preferredKeys = ["url", "secure_url", "link", "src", "href", "image", "original", "large", "medium", "small"];
+          for (const key of preferredKeys) {
+            if (key in value) {
+              const found = scanForUrl(value[key], depth + 1);
+              if (found) return found;
+            }
+          }
+          for (const key of Object.keys(value)) {
+            const found = scanForUrl(value[key], depth + 1);
+            if (found) return found;
+          }
+        }
+        return "";
+      }
+
+      const extractedUrl = scanForUrl(payload) || scanForUrl(rawBody);
 
       if (!response.ok) {
         return callback({ success: false, error: (payload && (payload.error || payload.message)) || ("Upload failed (" + response.status + ").") });
