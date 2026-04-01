@@ -1227,6 +1227,7 @@ const LoadingSpinnerComponent = {
 // twists never collapse.
 const PREVIEW_LENGTH       = 280;
 const THREAD_REPLY_THRESHOLD = 3;
+const REGULAR_TWIST_MEDIA_LIMIT = 4;
 
 // Shared markdown renderer — configured once, reused everywhere.
 // marked.parse() is synchronous and returns sanitised HTML.
@@ -1317,6 +1318,14 @@ const ReplyCardComponent = {
         ? DOMPurify.sanitize(renderMarkdown(this.replyText))
         : "<em style='color:#5a4e70'>Nothing to preview.</em>";
     },
+    replyCharCount() { return countTwistCharsExcludingMedia(this.replyText); },
+    replyOverLimit() { return this.replyCharCount > 280; },
+    replyMediaCount() { return countMediaEmbeds(this.replyText); },
+    replyMediaLimitExceeded() { return this.replyMediaCount > REGULAR_TWIST_MEDIA_LIMIT; },
+    mediaLimit() { return REGULAR_TWIST_MEDIA_LIMIT; },
+    canSubmitReply() {
+      return !!this.replyText.trim() && !this.isReplying && !this.replyOverLimit && !this.replyMediaLimitExceeded;
+    },
     canAct()   { return !!this.username && this.hasKeychain; },
     indent()   { return Math.min(this.depth, 4) * 16; },
     
@@ -1369,6 +1378,14 @@ const ReplyCardComponent = {
     submitReply() {
       const text = this.replyText.trim();
       if (!text || !this.canAct) return;
+      if (this.replyOverLimit) {
+        this.lastError = "Reply text exceeds 280 characters (media excluded).";
+        return;
+      }
+      if (this.replyMediaLimitExceeded) {
+        this.lastError = `Reply can include up to ${REGULAR_TWIST_MEDIA_LIMIT} images/videos.`;
+        return;
+      }
       this.isReplying = true;
       postTwistReply(this.username, text, this.reply.author, this.reply.permlink, (res) => {
         this.isReplying = false;
@@ -1617,10 +1634,13 @@ const ReplyCardComponent = {
                 font-size:13px;color:#e8e0f0;line-height:1.6;word-break:break-word;
               "
             ></div>
-            <div style="text-align:right;margin-top:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+              <span :style="{ fontSize:'11px', color: (replyOverLimit || replyMediaLimitExceeded) ? '#fca5a5' : '#5a4e70' }">
+                {{ replyCharCount }} / 280 (media excluded) · media {{ replyMediaCount }}/{{ mediaLimit }}
+              </span>
               <button
                 @click="submitReply"
-                :disabled="!replyText.trim() || isReplying"
+                :disabled="!canSubmitReply"
                 style="font-size:12px;padding:4px 12px;"
               >{{ isReplying ? "Posting…" : "Reply" }}</button>
             </div>
@@ -2998,6 +3018,14 @@ const TwistCardComponent = {
         ? DOMPurify.sanitize(renderMarkdown(this.replyText))
         : "<em style='color:#5a4e70'>Nothing to preview.</em>";
     },
+    replyCharCount() { return countTwistCharsExcludingMedia(this.replyText); },
+    replyOverLimit() { return this.replyCharCount > 280; },
+    replyMediaCount() { return countMediaEmbeds(this.replyText); },
+    replyMediaLimitExceeded() { return this.replyMediaCount > REGULAR_TWIST_MEDIA_LIMIT; },
+    mediaLimit() { return REGULAR_TWIST_MEDIA_LIMIT; },
+    canSubmitReply() {
+      return !!this.replyText.trim() && !this.isReplying && !this.replyOverLimit && !this.replyMediaLimitExceeded;
+    },
     showThread() {
       return this.threadExpanded || this.showReplies;
     }
@@ -3070,6 +3098,14 @@ const TwistCardComponent = {
     submitReply() {
       const text = this.replyText.trim();
       if (!text || !this.canAct) return;
+      if (this.replyOverLimit) {
+        this.lastError = "Reply text exceeds 280 characters (media excluded).";
+        return;
+      }
+      if (this.replyMediaLimitExceeded) {
+        this.lastError = `Reply can include up to ${REGULAR_TWIST_MEDIA_LIMIT} images/videos.`;
+        return;
+      }
       this.isReplying = true;
       postTwistReply(this.username, text, this.post.author, this.post.permlink, (res) => {
         this.isReplying = false;
@@ -3525,10 +3561,13 @@ const TwistCardComponent = {
             font-size:14px;color:#e8e0f0;line-height:1.6;word-break:break-word;
           "
         ></div>
-        <div style="text-align:right;margin-top:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+          <span :style="{ fontSize:'12px', color: (replyOverLimit || replyMediaLimitExceeded) ? '#fca5a5' : '#5a4e70' }">
+            {{ replyCharCount }} / 280 (media excluded) · media {{ replyMediaCount }}/{{ mediaLimit }}
+          </span>
           <button
             @click="submitReply"
-            :disabled="!replyText.trim() || isReplying"
+            :disabled="!canSubmitReply"
             style="font-size:13px;padding:5px 14px;"
           >{{ isReplying ? "Posting…" : "Reply" }}</button>
         </div>
@@ -3837,6 +3876,34 @@ const LiveTwistComposerComponent = {
 };
 
 
+function countTwistCharsExcludingMedia(message) {
+  if (!message) return 0;
+  let text = String(message);
+
+  // Markdown image syntax: ![alt](url)
+  text = text.replace(/!\[[^\]]*]\([^)]+\)/g, "");
+  // HTML media tags: <img ...>, <video ...>, <source ...>
+  text = text.replace(/<(img|video|source)\b[^>]*>/gi, "");
+  // Bare media URLs on their own line: image/GIF/video file extensions.
+  text = text.replace(
+    /^\s*https?:\/\/\S+\.(?:gif|png|jpe?g|webp|bmp|svg|mp4|webm|mov|m4v)(?:\?\S*)?\s*$/gim,
+    ""
+  );
+
+  return text.length;
+}
+
+function countMediaEmbeds(message) {
+  if (!message) return 0;
+  const text = String(message);
+  const patterns = [
+    /!\[[^\]]*]\([^)]+\)/g, // Markdown image
+    /<(img|video|source)\b[^>]*>/gi, // HTML media tags
+    /^\s*https?:\/\/\S+\.(?:gif|png|jpe?g|webp|bmp|svg|mp4|webm|mov|m4v)(?:\?\S*)?\s*$/gim // bare media URL
+  ];
+  return patterns.reduce((sum, pattern) => sum + ((text.match(pattern) || []).length), 0);
+}
+
 const TwistComposerComponent = {
   name: "TwistComposerComponent",
   components: { LiveTwistComposerComponent },
@@ -3858,9 +3925,18 @@ const TwistComposerComponent = {
     };
   },
   computed: {
-    charCount()   { return this.message.length; },
+    charCount()   { return countTwistCharsExcludingMedia(this.message); },
     overLimit()   { return this.charCount > 280; },
-    canPost()     { return !!this.username && this.hasKeychain && this.charCount > 0 && !this.overLimit && !this.isPosting; },
+    mediaCount()  { return countMediaEmbeds(this.message); },
+    mediaLimitExceeded() { return this.mediaCount > REGULAR_TWIST_MEDIA_LIMIT; },
+    mediaLimit()  { return REGULAR_TWIST_MEDIA_LIMIT; },
+    canPost()     {
+      return !!this.username && this.hasKeychain &&
+             this.charCount > 0 &&
+             !this.overLimit &&
+             !this.mediaLimitExceeded &&
+             !this.isPosting;
+    },
     previewHtml() {
       return this.message.trim()
         ? DOMPurify.sanitize(renderMarkdown(this.message))
@@ -3911,6 +3987,14 @@ const TwistComposerComponent = {
       });
     },
     submit() {
+      if (this.overLimit) {
+        this.notify("Twist text exceeds 280 characters (media excluded).", "error");
+        return;
+      }
+      if (this.mediaLimitExceeded) {
+        this.notify(`A twist can include up to ${this.mediaLimit} images/videos.`, "error");
+        return;
+      }
       if (!this.canPost) return;
       this.$emit("post", this.message.trim());
       this.message     = "";
@@ -4024,8 +4108,8 @@ const TwistComposerComponent = {
         ></div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-          <span :style="{ fontSize:'13px', color: overLimit ? '#fca5a5' : '#5a4e70' }">
-            {{ charCount }} / 280
+          <span :style="{ fontSize:'13px', color: (overLimit || mediaLimitExceeded) ? '#fca5a5' : '#5a4e70' }">
+            {{ charCount }} / 280 (media excluded) · media {{ mediaCount }}/{{ mediaLimit }}
           </span>
           <button @click="submit" :disabled="!canPost" style="padding:7px 20px;margin:0;">
             {{ isPosting ? "Posting..." : "Twist 🌀" }}
