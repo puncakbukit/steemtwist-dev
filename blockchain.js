@@ -418,16 +418,31 @@ function uploadImageToSteemit(username, file, callback) {
 
       const uploadUrl = "https://steemitimages.com/" + encodeURIComponent(username) + "/" + encodeURIComponent(signRes.result);
       const response  = await fetch(uploadUrl, { method: "POST", body: formData });
+      const rawBody   = await response.text();
       let payload = null;
-      try { payload = await response.json(); } catch {}
+      try { payload = rawBody ? JSON.parse(rawBody) : null; } catch {}
+
+      // Steemit ImageHoster response shape can vary by deploy/version:
+      // - { url: "..." }
+      // - { secure_url: "..." }
+      // - { data: { link: "..." } }
+      // - plain-text URL
+      // - ["https://..."]
+      const extractedUrl =
+        (payload && typeof payload.url === "string" && payload.url) ||
+        (payload && typeof payload.secure_url === "string" && payload.secure_url) ||
+        (payload && payload.data && typeof payload.data.link === "string" && payload.data.link) ||
+        (Array.isArray(payload) && typeof payload[0] === "string" && payload[0]) ||
+        ((rawBody || "").trim().match(/^https?:\/\/\S+$/i)?.[0]) ||
+        "";
 
       if (!response.ok) {
         return callback({ success: false, error: (payload && (payload.error || payload.message)) || ("Upload failed (" + response.status + ").") });
       }
-      if (payload && payload.url) {
-        return callback({ success: true, url: payload.url });
+      if (extractedUrl) {
+        return callback({ success: true, url: extractedUrl });
       }
-      return callback({ success: false, error: "Upload failed: missing URL in response." });
+      return callback({ success: false, error: "Upload failed: no image URL returned by server." });
     } catch (e) {
       return callback({ success: false, error: e && e.message ? e.message : "Error uploading image." });
     }
