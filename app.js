@@ -1670,7 +1670,8 @@ const SecretTwistView = {
       pageSize:          20,
       historyMonthsBack: 0,        // 0=current month, 2=last 3 months, etc.
       monthsLoaded:      1,        // how many calendar months fetched so far
-      loadingOlderMonth: false     // true while fetching an older month
+      loadingOlderMonth: false,    // true while fetching an older month
+      highlightedParentKey: ""
     };
   },
 
@@ -1727,6 +1728,7 @@ const SecretTwistView = {
     },
     tab() {
       this.page = 1;
+      if (this.tab !== "sent") this.highlightedParentKey = "";
     }
   },
 
@@ -1804,6 +1806,21 @@ const SecretTwistView = {
           this.notify(res.error || res.message || "Failed to send Secret Twist.", "error");
         }
       });
+    },
+
+    jumpToParentInSent(parent) {
+      if (!parent || !parent.key) return;
+      const idx = this.sent.findIndex(p => postKey(p) === parent.key);
+      if (idx === -1) {
+        this.notify("Original Secret Twist not found in loaded Sent history.", "info");
+        return;
+      }
+      this.tab = "sent";
+      this.page = Math.max(1, Math.ceil((idx + 1) / this.pageSize));
+      this.highlightedParentKey = parent.key;
+      setTimeout(() => {
+        if (this.highlightedParentKey === parent.key) this.highlightedParentKey = "";
+      }, 5000);
     }
   },
 
@@ -1899,6 +1916,9 @@ const SecretTwistView = {
             :post="post"
             :username="username"
             :has-keychain="hasKeychain"
+            :show-parent-link="tab === 'inbox'"
+            :highlight-key="highlightedParentKey"
+            @jump-to-parent="jumpToParentInSent"
           ></secret-twist-card-component>
 
           <!-- Load More (client-side page) -->

@@ -5038,7 +5038,9 @@ const SecretTwistCardComponent = {
     post:        { type: Object,  required: true },
     username:    { type: String,  default: "" },
     hasKeychain: { type: Boolean, default: false },
-    depth:       { type: Number,  default: 0 }    // nesting depth for replies
+    depth:       { type: Number,  default: 0 },   // nesting depth for replies
+    showParentLink: { type: Boolean, default: false },
+    highlightKey:   { type: String, default: "" }
   },
   data() {
     return {
@@ -5077,6 +5079,11 @@ const SecretTwistCardComponent = {
     // The other party in the conversation — used for reply encryption
     otherParty()   { return this.isSender ? this.recipient : this.post.author; },
     avatarUrl()    { return `https://steemitimages.com/u/${this.post.author}/avatar/small`; },
+    parentAuthor()   { return (this.post.parent_author || "").trim(); },
+    parentPermlink() { return (this.post.parent_permlink || "").trim(); },
+    hasParent()      { return !!this.parentAuthor && !!this.parentPermlink; },
+    parentKey()      { return this.hasParent ? `${this.parentAuthor}/${this.parentPermlink}` : ""; },
+    isHighlighted()  { return !!this.highlightKey && this.highlightKey === postKey(this.post); },
     replyCount()      { return this.post.children || 0; },
     replyMediaCount() { return countMediaEmbeds(this.replyMessage); },
     mediaLimit()      { return REGULAR_TWIST_MEDIA_LIMIT; },
@@ -5213,13 +5220,30 @@ const SecretTwistCardComponent = {
           }
         }
       );
+    },
+    jumpToParent() {
+      if (!this.hasParent) return;
+      this.$emit("jump-to-parent", {
+        key: this.parentKey,
+        author: this.parentAuthor,
+        permlink: this.parentPermlink
+      });
     }
   },
   template: `
-    <div style="
-      background:#1a1030;border:1px solid #3b1f5e;border-radius:12px;
-      padding:14px 16px;margin:10px auto;max-width:600px;text-align:left;
-    ">
+    <div :style="{
+      background:'#1a1030', border:'1px solid #3b1f5e', borderRadius:'12px',
+      padding:'14px 16px', margin:'10px auto', maxWidth:'600px', textAlign:'left',
+      borderColor: isHighlighted ? '#facc15' : '#3b1f5e',
+      boxShadow: isHighlighted ? '0 0 0 1px #facc15 inset' : 'none'
+    }">
+      <div v-if="showParentLink && hasParent" style="margin-bottom:8px;">
+        <a
+          href="#"
+          @click.prevent="jumpToParent"
+          style="font-size:12px;color:#d8b4fe;text-decoration:underline;"
+        >↪ View original in Sent</a>
+      </div>
       <!-- Header -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <a :href="'#/@' + post.author">
@@ -5394,6 +5418,8 @@ const SecretTwistCardComponent = {
           :username="username"
           :has-keychain="hasKeychain"
           :depth="depth + 1"
+          :highlight-key="highlightKey"
+          @jump-to-parent="$emit('jump-to-parent', $event)"
           style="margin:0 0 8px 0;"
         ></secret-twist-card-component>
       </div>
