@@ -3,6 +3,8 @@
 
 Posts are permanent and censorship-resistant. No backend, no build tools, no server — just four static files.
 
+> **Implementation snapshot:** this README reflects the current codebase as of **April 2026**.
+
 ---
 
 ## The Twister Community
@@ -62,7 +64,8 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 - 🌊 **Understream** — toggle between Twist Stream and full Steem data on Home, Explore, Profile, and Signals
 
 ### Twists
-- 📝 **Post twists** up to 280 characters with **markdown** and real-time **Write / Preview** tab
+- 📝 **Post twists** up to 280 characters (**media excluded**) with **markdown** and real-time **Write / Preview** tab
+- 📷 **Image upload** for twists/replies/secret twists via Steemit ImageHoster (signed with Keychain posting key); max **4 media items** per post/reply
 - 💬 **Thread replies** — recursive; auto-expanded two levels deep; Write / Preview on reply box
 - ✏️ **Edit** — re-broadcast with updated body; card updates instantly
 - 🗑️ **Delete** — true `delete_comment` (no votes/children) or body-blank fallback; removed from feed instantly
@@ -293,6 +296,7 @@ Recipient sees 🔒 signal → requestVerifyKey (Keychain) → message revealed
 
 - **Rootless from feed** — replies to `secret-YYYY-MM`, not visible in regular feed
 - **Unlimited length**, **markdown**, **Write / Preview** composer
+- **Image upload support** in both compose and reply editors (shared 4-media cap)
 - **Nested encrypted replies** — each decrypted individually on demand
 - **One-way reply** — only the recipient (non-author) can reply
 
@@ -357,6 +361,7 @@ steemtwist/
 - `fetchTwistsByUser(username, monthlyRoot)` — account history scan, stops at month boundary
 - `buildZeroPayoutOps(...)` — `[comment, comment_options]` with payouts disabled
 - `postTwist(username, message, callback)` — post new twist
+- `uploadImageToSteemit(username, file, callback)` — uploads image bytes to Steemit ImageHoster after Keychain signing
 - `postTwistReply(username, message, parentAuthor, parentPermlink, callback)`
 - `postLiveTwist(username, title, body, code, callback)` — post Live Twist; stores `{ type:"live_twist", version:1, title, code }` in `json_metadata`
 - `voteTwist(voter, author, permlink, weight, callback)` — weight 1–10000 (upvote); use `flagLiveTwist` for downvotes
@@ -514,7 +519,7 @@ Both use `parent_permlink: steemtwist`, `title: ""`, `parent_author: ""`.
 
 ## Hosting on GitHub Pages
 
-Push the four files, enable Pages on the `main` branch root. The hash router (`createWebHashHistory`) makes all routes work without server configuration.
+Push the four runtime files (`index.html`, `app.js`, `components.js`, `blockchain.js`), enable Pages on the `main` branch root. The hash router (`createWebHashHistory`) makes all routes work without server configuration.
 
 ---
 
