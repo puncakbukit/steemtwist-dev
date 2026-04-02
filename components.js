@@ -3930,6 +3930,7 @@ const TwistComposerComponent = {
     mediaCount()  { return countMediaEmbeds(this.message); },
     mediaLimitExceeded() { return this.mediaCount > REGULAR_TWIST_MEDIA_LIMIT; },
     mediaLimit()  { return REGULAR_TWIST_MEDIA_LIMIT; },
+    canUploadImage() { return this.mediaCount < this.mediaLimit; },
     canPost()     {
       return !!this.username && this.hasKeychain &&
              this.charCount > 0 &&
@@ -3972,6 +3973,10 @@ const TwistComposerComponent = {
     },
     uploadImage(file) {
       if (this.isUploadingImage) return;
+      if (!this.canUploadImage) {
+        this.notify(`A twist can include up to ${this.mediaLimit} images/videos.`, "error");
+        return;
+      }
       this.uploadError = "";
       this.isUploadingImage = true;
       uploadImageToSteemit(this.username, file, (res) => {
@@ -4090,7 +4095,8 @@ const TwistComposerComponent = {
           />
           <button
             @click="$refs.imageInput.click()"
-            :disabled="!username || !hasKeychain || isUploadingImage"
+            :disabled="!username || !hasKeychain || isUploadingImage || !canUploadImage"
+            :title="!canUploadImage ? ('Image limit reached (' + mediaLimit + ').') : ''"
             style="padding:6px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
           >{{ isUploadingImage ? "Uploading…" : "📷 Upload image" }}</button>
           <span v-if="uploadError" style="font-size:12px;color:#fca5a5;">{{ uploadError }}</span>
@@ -4370,6 +4376,9 @@ const SecretTwistComposerComponent = {
   },
   computed: {
     charCount()   { return this.message.length; },
+    mediaCount()  { return countMediaEmbeds(this.message); },
+    mediaLimit()  { return REGULAR_TWIST_MEDIA_LIMIT; },
+    canUploadImage() { return this.mediaCount < this.mediaLimit; },
     previewHtml() {
       return this.message.trim()
         ? DOMPurify.sanitize(renderMarkdown(this.message))
@@ -4411,6 +4420,10 @@ const SecretTwistComposerComponent = {
     },
     uploadImage(file) {
       if (this.isUploadingImage) return;
+      if (!this.canUploadImage) {
+        this.notify(`A secret twist can include up to ${this.mediaLimit} images/videos.`, "error");
+        return;
+      }
       this.uploadError = "";
       this.isUploadingImage = true;
       uploadImageToSteemit(this.username, file, (res) => {
@@ -4518,7 +4531,8 @@ const SecretTwistComposerComponent = {
         />
         <button
           @click="$refs.imageInput.click()"
-          :disabled="!username || !hasKeychain || isUploadingImage"
+          :disabled="!username || !hasKeychain || isUploadingImage || !canUploadImage"
+          :title="!canUploadImage ? ('Image limit reached (' + mediaLimit + ').') : ''"
           style="padding:6px 12px;margin:0;background:#0f0a1e;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
         >{{ isUploadingImage ? "Uploading…" : "📷 Upload image" }}</button>
         <span v-if="uploadError" style="font-size:12px;color:#fca5a5;">{{ uploadError }}</span>
