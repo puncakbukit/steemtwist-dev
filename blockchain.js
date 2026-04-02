@@ -787,6 +787,29 @@ function postTwistReply(username, message, parentAuthor, parentPermlink, callbac
   steem_keychain.requestBroadcast(username, ops, "Posting", callback);
 }
 
+// Post a Live Twist reply to an existing twist/reply.
+// Stores executable JS in json_metadata, same as top-level Live Twists.
+function postLiveTwistReply(username, title, body, code, parentAuthor, parentPermlink, callback) {
+  const replyPermlink = generateTwistPermlink(username);
+
+  const ops = buildZeroPayoutOps(
+    username,
+    body || "⚡ Live Twist — view on SteemTwist",
+    parentAuthor,
+    parentPermlink,
+    replyPermlink,
+    {
+      app:     "steemtwist/0.1",
+      type:    "live_twist",
+      version: 1,
+      title:   title || "Live Twist",
+      code
+    }
+  );
+
+  steem_keychain.requestBroadcast(username, ops, "Posting", callback);
+}
+
 // Vote on a twist via Steem Keychain.
 // weight: integer 1–10000 (100% = 10000).
 function voteTwist(voter, author, permlink, weight, callback) {

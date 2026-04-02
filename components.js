@@ -1260,10 +1260,14 @@ const ReplyCardComponent = {
   data() {
     return {
       showReplyBox:     false,
+      replyMode:        draftStorage.load("reply_mode_" + this.reply.permlink, "twist"),
       replyPreviewMode: false,
       // Auto-expand the first two nesting levels (depth 0 and 1).
       showChildren:  this.depth < 2,
       replyText:     draftStorage.load("reply_" + this.reply.permlink, ""),
+      liveReplyTitle: draftStorage.load("live_reply_title_" + this.reply.permlink, ""),
+      liveReplyBody:  draftStorage.load("live_reply_body_" + this.reply.permlink, ""),
+      liveReplyCode:  draftStorage.load("live_reply_code_" + this.reply.permlink, ""),
       isReplying:    false,
       isVoting:      false,
       hasVoted:      false,
@@ -1306,6 +1310,13 @@ const ReplyCardComponent = {
       return `#/@${this.reply.author}/${this.reply.permlink}`;
     },
     bodyHtml() { return DOMPurify.sanitize(renderMarkdown(stripBackLink(this.editedBody !== null ? this.editedBody : this.reply.body))); },
+    isLiveTwist() {
+      try {
+        const raw = this.reply.json_metadata;
+        const meta = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : {};
+        return meta.type === "live_twist" && !!meta.code;
+      } catch { return false; }
+    },
     isLong() { return stripBackLink(this.reply.body).length > PREVIEW_LENGTH; },
     bodyPreviewHtml() {
       return DOMPurify.sanitize(renderMarkdown(
@@ -1326,6 +1337,9 @@ const ReplyCardComponent = {
     canSubmitReply() {
       return !!this.replyText.trim() && !this.isReplying && !this.replyOverLimit && !this.replyMediaLimitExceeded;
     },
+    canSubmitLiveReply() {
+      return !!this.liveReplyCode.trim() && !this.isReplying;
+    },
     canAct()   { return !!this.username && this.hasKeychain; },
     indent()   { return Math.min(this.depth, 4) * 16; },
     
@@ -1340,7 +1354,11 @@ const ReplyCardComponent = {
 }
   },
   watch: {
-    replyText(v) { draftStorage.save("reply_" + this.reply.permlink, v); }
+    replyText(v) { draftStorage.save("reply_" + this.reply.permlink, v); },
+    replyMode(v) { draftStorage.save("reply_mode_" + this.reply.permlink, v); },
+    liveReplyTitle(v) { draftStorage.save("live_reply_title_" + this.reply.permlink, v); },
+    liveReplyBody(v)  { draftStorage.save("live_reply_body_" + this.reply.permlink, v); },
+    liveReplyCode(v)  { draftStorage.save("live_reply_code_" + this.reply.permlink, v); }
   },
     methods: {
     vote() {
@@ -1376,6 +1394,36 @@ const ReplyCardComponent = {
       if (this.canAct)         this.showReplyBox  = !this.showReplyBox;
     },
     submitReply() {
+      if (this.replyMode === "live") {
+        const code = this.liveReplyCode.trim();
+        if (!code || !this.canAct) return;
+        this.isReplying = true;
+        postLiveTwistReply(
+          this.username,
+          this.liveReplyTitle.trim() || "Live Twist",
+          this.liveReplyBody.trim() || "⚡ Live Twist — view on SteemTwist",
+          code,
+          this.reply.author,
+          this.reply.permlink,
+          (res) => {
+            this.isReplying = false;
+            if (res.success) {
+              this.liveReplyTitle  = "";
+              this.liveReplyBody   = "";
+              this.liveReplyCode   = "";
+              this.showChildren    = true;
+              this.replyCount++;
+              draftStorage.clear("live_reply_title_" + this.reply.permlink);
+              draftStorage.clear("live_reply_body_" + this.reply.permlink);
+              draftStorage.clear("live_reply_code_" + this.reply.permlink);
+            } else {
+              this.lastError = res.error || res.message || "Live reply failed.";
+            }
+          }
+        );
+        return;
+      }
+
       const text = this.replyText.trim();
       if (!text || !this.canAct) return;
       if (this.replyOverLimit) {
@@ -1464,11 +1512,16 @@ const ReplyCardComponent = {
             >{{ relativeTime }}</a>
           </div>
 
-          <!-- Body — collapsed to PREVIEW_LENGTH if long, expanded on click -->
-          <div class="twist-body" style="font-size:14px;"
+          <!-- Body -->
+          <live-twist-component
+            v-if="isLiveTwist"
+            :post="reply"
+            style="margin-bottom:8px;"
+          ></live-twist-component>
+          <div v-else class="twist-body" style="font-size:14px;"
             v-html="isLong && !replyExpanded ? bodyPreviewHtml : bodyHtml"
           ></div>
-          <div v-if="isLong" style="margin-bottom:4px;">
+          <div v-if="isLong && !isLiveTwist" style="margin-bottom:4px;">
             <button
               @click="replyExpanded = !replyExpanded"
               style="background:none;border:none;padding:0;color:#a855f7;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline;"
@@ -1593,6 +1646,28 @@ const ReplyCardComponent = {
 
           <!-- Compose box -->
           <div v-if="showReplyBox && canAct" style="margin-top:8px;">
+            <div style="display:flex;gap:4px;margin-bottom:6px;">
+              <button
+                @click="replyMode = 'twist'"
+                :style="{
+                  background: replyMode === 'twist' ? '#2e2050' : '#0f0a1e',
+                  color:      replyMode === 'twist' ? '#e8e0f0' : '#9b8db0',
+                  border:'1px solid #2e2050', borderRadius:'999px',
+                  padding:'2px 10px', fontSize:'11px', margin:0, cursor:'pointer'
+                }"
+              >🌀 Reply</button>
+              <button
+                @click="replyMode = 'live'"
+                :style="{
+                  background: replyMode === 'live' ? '#3b1a07' : '#0f0a1e',
+                  color:      replyMode === 'live' ? '#fdba74' : '#9b8db0',
+                  border:'1px solid #2e2050', borderRadius:'999px',
+                  padding:'2px 10px', fontSize:'11px', margin:0, cursor:'pointer'
+                }"
+              >⚡ Live Reply</button>
+            </div>
+
+            <template v-if="replyMode === 'twist'">
             <div style="display:flex;gap:4px;margin-bottom:4px;">
               <button
                 @click="replyPreviewMode = false"
@@ -1644,6 +1719,38 @@ const ReplyCardComponent = {
                 style="font-size:12px;padding:4px 12px;"
               >{{ isReplying ? "Posting…" : "Reply" }}</button>
             </div>
+            </template>
+
+            <template v-else>
+              <input
+                v-model="liveReplyTitle"
+                type="text"
+                maxlength="80"
+                placeholder="Live Twist"
+                style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;margin-bottom:6px;"
+              />
+              <input
+                v-model="liveReplyBody"
+                type="text"
+                maxlength="280"
+                placeholder="⚡ Live Twist — view on SteemTwist"
+                style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;margin-bottom:6px;"
+              />
+              <textarea
+                v-model="liveReplyCode"
+                spellcheck="false"
+                placeholder="app.render('Hello from a Live Reply!')"
+                style="width:100%;box-sizing:border-box;padding:7px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:90px;line-height:1.5;"
+              ></textarea>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                <span style="font-size:11px;color:#5a4e70;">Code {{ liveReplyCode.length }} / 10000</span>
+                <button
+                  @click="submitReply"
+                  :disabled="!canSubmitLiveReply"
+                  style="font-size:12px;padding:4px 12px;"
+                >{{ isReplying ? "Posting…" : "Publish ⚡" }}</button>
+              </div>
+            </template>
           </div>
 
           <!-- Error -->
@@ -2900,10 +3007,14 @@ const TwistCardComponent = {
   data() {
     return {
       showReplyBox:     false,
+      replyMode:        draftStorage.load("reply_mode_" + this.post.permlink, "twist"),
       replyPreviewMode: false,
       // Auto-expand replies if the post already has some.
       showReplies:     (this.post.children || 0) > 0,
       replyText:       draftStorage.load("reply_" + this.post.permlink, ""),
+      liveReplyTitle:  draftStorage.load("live_reply_title_" + this.post.permlink, ""),
+      liveReplyBody:   draftStorage.load("live_reply_body_" + this.post.permlink, ""),
+      liveReplyCode:   draftStorage.load("live_reply_code_" + this.post.permlink, ""),
       isReplying:      false,
       isVoting:        false,
       hasVoted:        false,
@@ -3026,12 +3137,19 @@ const TwistCardComponent = {
     canSubmitReply() {
       return !!this.replyText.trim() && !this.isReplying && !this.replyOverLimit && !this.replyMediaLimitExceeded;
     },
+    canSubmitLiveReply() {
+      return !!this.liveReplyCode.trim() && !this.isReplying;
+    },
     showThread() {
       return this.threadExpanded || this.showReplies;
     }
   },
   watch: {
     replyText(v) { draftStorage.save("reply_" + this.post.permlink, v); },
+    replyMode(v) { draftStorage.save("reply_mode_" + this.post.permlink, v); },
+    liveReplyTitle(v) { draftStorage.save("live_reply_title_" + this.post.permlink, v); },
+    liveReplyBody(v)  { draftStorage.save("live_reply_body_" + this.post.permlink, v); },
+    liveReplyCode(v)  { draftStorage.save("live_reply_code_" + this.post.permlink, v); },
     editText(v)  { if (this.showEditBox) draftStorage.save("edit_" + this.post.permlink, { editText: v }); },
     editCode(v)  { if (this.isLiveEditBox) draftStorage.save("live_edit_" + this.post.permlink, { editCode: v, editTitle: this.editTitle, editBody: this.editBody }); },
     editTitle(v) { if (this.isLiveEditBox) draftStorage.save("live_edit_" + this.post.permlink, { editCode: this.editCode, editTitle: v, editBody: this.editBody }); },
@@ -3096,6 +3214,37 @@ const TwistCardComponent = {
       });
     },
     submitReply() {
+      if (this.replyMode === "live") {
+        const code = this.liveReplyCode.trim();
+        if (!code || !this.canAct) return;
+        this.isReplying = true;
+        postLiveTwistReply(
+          this.username,
+          this.liveReplyTitle.trim() || "Live Twist",
+          this.liveReplyBody.trim() || "⚡ Live Twist — view on SteemTwist",
+          code,
+          this.post.author,
+          this.post.permlink,
+          (res) => {
+            this.isReplying = false;
+            if (res.success) {
+              this.liveReplyTitle  = "";
+              this.liveReplyBody   = "";
+              this.liveReplyCode   = "";
+              this.showReplies     = true;
+              this.replyCount++;
+              draftStorage.clear("live_reply_title_" + this.post.permlink);
+              draftStorage.clear("live_reply_body_" + this.post.permlink);
+              draftStorage.clear("live_reply_code_" + this.post.permlink);
+              this.$emit("replied", this.post);
+            } else {
+              this.lastError = res.error || res.message || "Live reply failed.";
+            }
+          }
+        );
+        return;
+      }
+
       const text = this.replyText.trim();
       if (!text || !this.canAct) return;
       if (this.replyOverLimit) {
@@ -3519,6 +3668,27 @@ const TwistCardComponent = {
 
       <!-- Inline reply compose box -->
       <div v-if="showReplyBox && canAct" style="margin-top:12px;">
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <button
+            @click="replyMode = 'twist'"
+            :style="{
+              background: replyMode === 'twist' ? '#2e2050' : '#0f0a1e',
+              color:      replyMode === 'twist' ? '#e8e0f0' : '#9b8db0',
+              border:'1px solid #2e2050', borderRadius:'999px',
+              padding:'3px 12px', fontSize:'12px', margin:0, cursor:'pointer'
+            }"
+          >🌀 Reply</button>
+          <button
+            @click="replyMode = 'live'"
+            :style="{
+              background: replyMode === 'live' ? '#3b1a07' : '#0f0a1e',
+              color:      replyMode === 'live' ? '#fdba74' : '#9b8db0',
+              border:'1px solid #2e2050', borderRadius:'999px',
+              padding:'3px 12px', fontSize:'12px', margin:0, cursor:'pointer'
+            }"
+          >⚡ Live Reply</button>
+        </div>
+        <template v-if="replyMode === 'twist'">
         <div style="display:flex;gap:4px;margin-bottom:4px;">
           <button
             @click="replyPreviewMode = false"
@@ -3571,6 +3741,37 @@ const TwistCardComponent = {
             style="font-size:13px;padding:5px 14px;"
           >{{ isReplying ? "Posting…" : "Reply" }}</button>
         </div>
+        </template>
+        <template v-else>
+          <input
+            v-model="liveReplyTitle"
+            type="text"
+            maxlength="80"
+            placeholder="Live Twist"
+            style="width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:13px;margin-bottom:6px;"
+          />
+          <input
+            v-model="liveReplyBody"
+            type="text"
+            maxlength="280"
+            placeholder="⚡ Live Twist — view on SteemTwist"
+            style="width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:13px;margin-bottom:6px;"
+          />
+          <textarea
+            v-model="liveReplyCode"
+            spellcheck="false"
+            placeholder="app.render('Hello from a Live Reply!')"
+            style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:110px;line-height:1.5;"
+          ></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+            <span style="font-size:12px;color:#5a4e70;">Code {{ liveReplyCode.length }} / 10000</span>
+            <button
+              @click="submitReply"
+              :disabled="!canSubmitLiveReply"
+              style="font-size:13px;padding:5px 14px;"
+            >{{ isReplying ? "Posting…" : "Publish ⚡" }}</button>
+          </div>
+        </template>
       </div>
 
       <!-- Blockchain error -->
