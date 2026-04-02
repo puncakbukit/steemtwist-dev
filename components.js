@@ -1252,6 +1252,10 @@ function stripBackLink(text) {
 // so the two can reference each other via the global component registry.
 const ReplyCardComponent = {
   name: "ReplyCardComponent",
+  liveTemplates: LIVE_TWIST_TEMPLATES,
+  liveGreetings: LIVE_TWIST_GREETINGS,
+  liveQueries: LIVE_TWIST_QUERIES,
+  liveActions: LIVE_TWIST_ACTIONS,
   inject: ["username", "hasKeychain"],
   props: {
     reply: { type: Object, required: true },
@@ -1268,6 +1272,12 @@ const ReplyCardComponent = {
       liveReplyTitle: draftStorage.load("live_reply_title_" + this.reply.permlink, ""),
       liveReplyBody:  draftStorage.load("live_reply_body_" + this.reply.permlink, ""),
       liveReplyCode:  draftStorage.load("live_reply_code_" + this.reply.permlink, ""),
+      liveReplyTab:   "code",
+      liveReplyTemplateSubTab: "simple",
+      liveReplyPreviewKey: 0,
+      liveReplyIframeHeight: 200,
+      isUploadingReplyImage: false,
+      replyUploadError: "",
       isReplying:    false,
       isVoting:      false,
       hasVoted:      false,
@@ -1340,6 +1350,7 @@ const ReplyCardComponent = {
     canSubmitLiveReply() {
       return !!this.liveReplyCode.trim() && !this.isReplying;
     },
+    canUploadReplyImage() { return this.replyMediaCount < this.mediaLimit; },
     canAct()   { return !!this.username && this.hasKeychain; },
     indent()   { return Math.min(this.depth, 4) * 16; },
     
@@ -1392,6 +1403,68 @@ const ReplyCardComponent = {
     toggleReplies() {
       if (this.replyCount > 0) this.showChildren = !this.showChildren;
       if (this.canAct)         this.showReplyBox  = !this.showReplyBox;
+    },
+    insertReplyAtCursor(text) {
+      const ta = this.$refs.replyTextarea;
+      if (!ta) {
+        this.replyText = (this.replyText ? this.replyText + "\n" : "") + text;
+        return;
+      }
+      const start = ta.selectionStart ?? this.replyText.length;
+      const end   = ta.selectionEnd ?? this.replyText.length;
+      this.replyText = this.replyText.slice(0, start) + text + this.replyText.slice(end);
+      this.$nextTick(() => {
+        ta.focus();
+        const pos = start + text.length;
+        ta.selectionStart = pos;
+        ta.selectionEnd = pos;
+      });
+    },
+    onReplyImageSelected(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      this.uploadReplyImage(file);
+    },
+    uploadReplyImage(file) {
+      if (this.isUploadingReplyImage || !this.canAct) return;
+      if (!this.canUploadReplyImage) {
+        this.lastError = `Reply can include up to ${this.mediaLimit} images/videos.`;
+        return;
+      }
+      this.replyUploadError = "";
+      this.isUploadingReplyImage = true;
+      uploadImageToSteemit(this.username, file, (res) => {
+        this.isUploadingReplyImage = false;
+        if (!res.success) {
+          this.replyUploadError = res.error || "Image upload failed.";
+          this.lastError = this.replyUploadError;
+          return;
+        }
+        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        this.insertReplyAtCursor(`![${alt}](${res.url})`);
+      });
+    },
+    runLiveReplyPreview() {
+      this.liveReplyTab = "preview";
+      this.liveReplyIframeHeight = 80;
+      this.liveReplyPreviewKey++;
+    },
+    useLiveReplyTemplate(tpl) {
+      this.liveReplyCode = tpl.code;
+      this.liveReplyTitle = tpl.name;
+      this.liveReplyBody = tpl.desc || "";
+      this.liveReplyTab = "code";
+    },
+    buildLiveReplySandboxDoc(code) {
+      return buildLiveTwistSandboxDoc(code);
+    },
+    onLiveReplyPreviewMessage(e) {
+      const iframe = this.$refs.liveReplyPreview;
+      if (!iframe || e.source !== iframe.contentWindow) return;
+      if (e?.data?.type === "LIVE_REPLY_PREVIEW_RESIZE") {
+        this.liveReplyIframeHeight = Math.max(e.data.height || 80, 80);
+      }
     },
     submitReply() {
       if (this.replyMode === "live") {
@@ -1481,6 +1554,12 @@ const ReplyCardComponent = {
         }
       });
     }
+  },
+  mounted() {
+    window.addEventListener("message", this.onLiveReplyPreviewMessage);
+  },
+  unmounted() {
+    window.removeEventListener("message", this.onLiveReplyPreviewMessage);
   },
   template: `
     <div :style="{ paddingLeft: indent + 'px' }">
@@ -1690,6 +1769,7 @@ const ReplyCardComponent = {
             </div>
             <textarea
               v-show="!replyPreviewMode"
+              ref="replyTextarea"
               v-model="replyText"
               placeholder="Write a reply… (markdown supported)"
               maxlength="1000"
@@ -1699,6 +1779,15 @@ const ReplyCardComponent = {
                 font-size:13px;resize:vertical;min-height:52px;
               "
             ></textarea>
+            <div v-show="!replyPreviewMode" style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
+              <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
+              <button
+                @click="$refs.replyImageInput.click()"
+                :disabled="isUploadingReplyImage || !canUploadReplyImage"
+                style="padding:3px 10px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:11px;"
+              >{{ isUploadingReplyImage ? "Uploading…" : "📷 Upload image" }}</button>
+              <span v-if="replyUploadError" style="font-size:11px;color:#fca5a5;">{{ replyUploadError }}</span>
+            </div>
             <div
               v-show="replyPreviewMode"
               class="twist-body"
@@ -1736,12 +1825,43 @@ const ReplyCardComponent = {
                 placeholder="⚡ Live Twist — view on SteemTwist"
                 style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;margin-bottom:6px;"
               />
+              <div style="display:flex;gap:4px;margin-bottom:0;">
+                <button @click="liveReplyTab = 'code'"
+                  :style="{ background: liveReplyTab==='code' ? '#2e2050' : 'none', color: liveReplyTab==='code' ? '#e8e0f0' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'2px 10px', fontSize:'11px', margin:0, cursor:'pointer' }">Code</button>
+                <button @click="runLiveReplyPreview"
+                  :style="{ background: liveReplyTab==='preview' ? '#2e2050' : 'none', color: liveReplyTab==='preview' ? '#fb923c' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'2px 10px', fontSize:'11px', margin:0, cursor:'pointer' }">▶ Preview</button>
+                <button @click="liveReplyTab = 'templates'"
+                  :style="{ background: liveReplyTab==='templates' ? '#2e2050' : 'none', color: liveReplyTab==='templates' ? '#22d3ee' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'2px 10px', fontSize:'11px', margin:0, cursor:'pointer' }">📄 Templates</button>
+              </div>
               <textarea
+                v-show="liveReplyTab === 'code'"
                 v-model="liveReplyCode"
                 spellcheck="false"
                 placeholder="app.render('Hello from a Live Reply!')"
-                style="width:100%;box-sizing:border-box;padding:7px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:90px;line-height:1.5;"
+                style="width:100%;box-sizing:border-box;padding:7px;border-radius:0 8px 8px 8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:90px;line-height:1.5;"
               ></textarea>
+              <div v-if="liveReplyTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">
+                <iframe :key="liveReplyPreviewKey" ref="liveReplyPreview" sandbox="allow-scripts"
+                  :srcdoc="buildLiveReplySandboxDoc(liveReplyCode)"
+                  :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e' }"
+                  scrolling="no"></iframe>
+              </div>
+              <div v-if="liveReplyTab === 'templates'" style="border:1px solid #2e2050;border-radius:0 8px 8px 8px;background:#0a0616;padding:8px;">
+                <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
+                  <button v-for="st in [{k:'simple',label:'🔧 Simple'},{k:'greetings',label:'🎉 Greetings'},{k:'queries',label:'🔍 Queries'},{k:'actions',label:'⚡ Actions'}]"
+                    :key="st.k" @click="liveReplyTemplateSubTab = st.k"
+                    :style="{ borderRadius:'20px', padding:'2px 8px', fontSize:'10px', border:'1px solid', background: liveReplyTemplateSubTab===st.k ? '#2e2050' : 'none', color: liveReplyTemplateSubTab===st.k ? '#e8e0f0' : '#9b8db0', borderColor: liveReplyTemplateSubTab===st.k ? '#a855f7' : '#2e2050', margin:0, cursor:'pointer' }"
+                  >{{ st.label }}</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                  <div v-for="tpl in (liveReplyTemplateSubTab==='simple' ? $options.liveTemplates : liveReplyTemplateSubTab==='greetings' ? $options.liveGreetings : liveReplyTemplateSubTab==='queries' ? $options.liveQueries : $options.liveActions)"
+                    :key="tpl.id" @click="useLiveReplyTemplate(tpl)"
+                    style="background:#1a1030;border:1px solid #2e2050;border-radius:8px;padding:8px;cursor:pointer;">
+                    <div style="font-size:14px;">{{ tpl.icon }}</div>
+                    <div style="font-size:11px;color:#e8e0f0;font-weight:600;">{{ tpl.name }}</div>
+                  </div>
+                </div>
+              </div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
                 <span style="font-size:11px;color:#5a4e70;">Code {{ liveReplyCode.length }} / 10000</span>
                 <button
@@ -2996,6 +3116,10 @@ ${'<'}/script>
 // fixing the case where short posts with replies never showed them.
 const TwistCardComponent = {
   name: "TwistCardComponent",
+  liveTemplates: LIVE_TWIST_TEMPLATES,
+  liveGreetings: LIVE_TWIST_GREETINGS,
+  liveQueries: LIVE_TWIST_QUERIES,
+  liveActions: LIVE_TWIST_ACTIONS,
   components: { ThreadComponent, LiveTwistComponent },
   props: {
     post:        { type: Object,  required: true },
@@ -3015,6 +3139,12 @@ const TwistCardComponent = {
       liveReplyTitle:  draftStorage.load("live_reply_title_" + this.post.permlink, ""),
       liveReplyBody:   draftStorage.load("live_reply_body_" + this.post.permlink, ""),
       liveReplyCode:   draftStorage.load("live_reply_code_" + this.post.permlink, ""),
+      liveReplyTab:    "code",
+      liveReplyTemplateSubTab: "simple",
+      liveReplyPreviewKey: 0,
+      liveReplyIframeHeight: 200,
+      isUploadingReplyImage: false,
+      replyUploadError: "",
       isReplying:      false,
       isVoting:        false,
       hasVoted:        false,
@@ -3140,6 +3270,7 @@ const TwistCardComponent = {
     canSubmitLiveReply() {
       return !!this.liveReplyCode.trim() && !this.isReplying;
     },
+    canUploadReplyImage() { return this.replyMediaCount < this.mediaLimit; },
     showThread() {
       return this.threadExpanded || this.showReplies;
     }
@@ -3193,6 +3324,68 @@ const TwistCardComponent = {
       this.showReplies = !this.showReplies;
       if (this.canAct) {
         this.showReplyBox = !this.showReplyBox;
+      }
+    },
+    insertReplyAtCursor(text) {
+      const ta = this.$refs.replyTextarea;
+      if (!ta) {
+        this.replyText = (this.replyText ? this.replyText + "\n" : "") + text;
+        return;
+      }
+      const start = ta.selectionStart ?? this.replyText.length;
+      const end   = ta.selectionEnd ?? this.replyText.length;
+      this.replyText = this.replyText.slice(0, start) + text + this.replyText.slice(end);
+      this.$nextTick(() => {
+        ta.focus();
+        const pos = start + text.length;
+        ta.selectionStart = pos;
+        ta.selectionEnd = pos;
+      });
+    },
+    onReplyImageSelected(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      this.uploadReplyImage(file);
+    },
+    uploadReplyImage(file) {
+      if (this.isUploadingReplyImage || !this.canAct) return;
+      if (!this.canUploadReplyImage) {
+        this.lastError = `Reply can include up to ${this.mediaLimit} images/videos.`;
+        return;
+      }
+      this.replyUploadError = "";
+      this.isUploadingReplyImage = true;
+      uploadImageToSteemit(this.username, file, (res) => {
+        this.isUploadingReplyImage = false;
+        if (!res.success) {
+          this.replyUploadError = res.error || "Image upload failed.";
+          this.lastError = this.replyUploadError;
+          return;
+        }
+        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        this.insertReplyAtCursor(`![${alt}](${res.url})`);
+      });
+    },
+    runLiveReplyPreview() {
+      this.liveReplyTab = "preview";
+      this.liveReplyIframeHeight = 80;
+      this.liveReplyPreviewKey++;
+    },
+    useLiveReplyTemplate(tpl) {
+      this.liveReplyCode = tpl.code;
+      this.liveReplyTitle = tpl.name;
+      this.liveReplyBody = tpl.desc || "";
+      this.liveReplyTab = "code";
+    },
+    buildLiveReplySandboxDoc(code) {
+      return buildLiveTwistSandboxDoc(code);
+    },
+    onLiveReplyPreviewMessage(e) {
+      const iframe = this.$refs.liveReplyPreview;
+      if (!iframe || e.source !== iframe.contentWindow) return;
+      if (e?.data?.type === "LIVE_REPLY_PREVIEW_RESIZE") {
+        this.liveReplyIframeHeight = Math.max(e.data.height || 80, 80);
       }
     },
     pinPost() {
@@ -3376,6 +3569,12 @@ const TwistCardComponent = {
         }
       });
     }
+  },
+  mounted() {
+    window.addEventListener("message", this.onLiveReplyPreviewMessage);
+  },
+  unmounted() {
+    window.removeEventListener("message", this.onLiveReplyPreviewMessage);
   },
   template: `
     <div style="
@@ -3711,6 +3910,7 @@ const TwistCardComponent = {
         </div>
         <textarea
           v-show="!replyPreviewMode"
+          ref="replyTextarea"
           v-model="replyText"
           placeholder="Write a reply… (markdown supported)"
           maxlength="1000"
@@ -3721,6 +3921,15 @@ const TwistCardComponent = {
             color:#e8e0f0;font-size:14px;resize:vertical;min-height:60px;
           "
         ></textarea>
+        <div v-show="!replyPreviewMode" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
+          <button
+            @click="$refs.replyImageInput.click()"
+            :disabled="isUploadingReplyImage || !canUploadReplyImage"
+            style="padding:5px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+          >{{ isUploadingReplyImage ? "Uploading…" : "📷 Upload image" }}</button>
+          <span v-if="replyUploadError" style="font-size:12px;color:#fca5a5;">{{ replyUploadError }}</span>
+        </div>
         <div
           v-show="replyPreviewMode"
           class="twist-body"
@@ -3757,12 +3966,43 @@ const TwistCardComponent = {
             placeholder="⚡ Live Twist — view on SteemTwist"
             style="width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:13px;margin-bottom:6px;"
           />
+          <div style="display:flex;gap:4px;margin-bottom:0;">
+            <button @click="liveReplyTab = 'code'"
+              :style="{ background: liveReplyTab==='code' ? '#2e2050' : 'none', color: liveReplyTab==='code' ? '#e8e0f0' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'3px 12px', fontSize:'12px', margin:0, cursor:'pointer' }">Code</button>
+            <button @click="runLiveReplyPreview"
+              :style="{ background: liveReplyTab==='preview' ? '#2e2050' : 'none', color: liveReplyTab==='preview' ? '#fb923c' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'3px 12px', fontSize:'12px', margin:0, cursor:'pointer' }">▶ Preview</button>
+            <button @click="liveReplyTab = 'templates'"
+              :style="{ background: liveReplyTab==='templates' ? '#2e2050' : 'none', color: liveReplyTab==='templates' ? '#22d3ee' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'3px 12px', fontSize:'12px', margin:0, cursor:'pointer' }">📄 Templates</button>
+          </div>
           <textarea
+            v-show="liveReplyTab === 'code'"
             v-model="liveReplyCode"
             spellcheck="false"
             placeholder="app.render('Hello from a Live Reply!')"
-            style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:110px;line-height:1.5;"
+            style="width:100%;box-sizing:border-box;padding:8px;border-radius:0 8px 8px 8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;font-size:12px;font-family:monospace;resize:vertical;min-height:110px;line-height:1.5;"
           ></textarea>
+          <div v-if="liveReplyTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">
+            <iframe :key="liveReplyPreviewKey" ref="liveReplyPreview" sandbox="allow-scripts"
+              :srcdoc="buildLiveReplySandboxDoc(liveReplyCode)"
+              :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e' }"
+              scrolling="no"></iframe>
+          </div>
+          <div v-if="liveReplyTab === 'templates'" style="border:1px solid #2e2050;border-radius:0 8px 8px 8px;background:#0a0616;padding:10px;">
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
+              <button v-for="st in [{k:'simple',label:'🔧 Simple'},{k:'greetings',label:'🎉 Greetings'},{k:'queries',label:'🔍 Queries'},{k:'actions',label:'⚡ Actions'}]"
+                :key="st.k" @click="liveReplyTemplateSubTab = st.k"
+                :style="{ borderRadius:'20px', padding:'3px 10px', fontSize:'11px', border:'1px solid', background: liveReplyTemplateSubTab===st.k ? '#2e2050' : 'none', color: liveReplyTemplateSubTab===st.k ? '#e8e0f0' : '#9b8db0', borderColor: liveReplyTemplateSubTab===st.k ? '#a855f7' : '#2e2050', margin:0, cursor:'pointer' }"
+              >{{ st.label }}</button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div v-for="tpl in (liveReplyTemplateSubTab==='simple' ? $options.liveTemplates : liveReplyTemplateSubTab==='greetings' ? $options.liveGreetings : liveReplyTemplateSubTab==='queries' ? $options.liveQueries : $options.liveActions)"
+                :key="tpl.id" @click="useLiveReplyTemplate(tpl)"
+                style="background:#1a1030;border:1px solid #2e2050;border-radius:8px;padding:8px;cursor:pointer;">
+                <div style="font-size:16px;">{{ tpl.icon }}</div>
+                <div style="font-size:12px;color:#e8e0f0;font-weight:600;">{{ tpl.name }}</div>
+              </div>
+            </div>
+          </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
             <span style="font-size:12px;color:#5a4e70;">Code {{ liveReplyCode.length }} / 10000</span>
             <button
@@ -4103,6 +4343,20 @@ function countMediaEmbeds(message) {
     /^\s*https?:\/\/\S+\.(?:gif|png|jpe?g|webp|bmp|svg|mp4|webm|mov|m4v)(?:\?\S*)?\s*$/gim // bare media URL
   ];
   return patterns.reduce((sum, pattern) => sum + ((text.match(pattern) || []).length), 0);
+}
+
+function buildLiveTwistSandboxDoc(userCode) {
+  const escaped = JSON.stringify(userCode || "");
+  const escapedPurifyConfig = LIVE_TWIST_PURIFY_CONFIG;
+  return "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js' integrity='sha256-wIRQlqfEpnQfNirFBslMHH0n3GA7zBv2Slh/dvLb46E=' crossorigin='anonymous'></script><style>" +
+    "body{margin:0;padding:8px;font-family:system-ui,sans-serif;font-size:14px;background:#0f0a1e;color:#e8e0f0;box-sizing:border-box;word-break:break-word}" +
+    "*{box-sizing:border-box}" +
+    "button{cursor:pointer;padding:5px 12px;border-radius:6px;background:#6d28d9;color:#fff;border:none;font-size:13px}" +
+    "input,textarea{background:#1a1030;color:#e8e0f0;border:1px solid #3b1f5e;border-radius:6px;padding:5px 8px;font-size:13px;width:100%}" +
+    "#_root{min-height:32px}" +
+    "</style></head><body><div id='_root'></div>" +
+    "<script>(function(){window.fetch=()=>Promise.reject(new Error('Network blocked'));window.XMLHttpRequest=function(){throw new Error('Network blocked');};window.WebSocket=function(){throw new Error('Network blocked');};window.open=()=>null;var purify=DOMPurify;var _purifyConfig=" + escapedPurifyConfig + ";function sanitize(h){if(typeof h!=='string')return '';if(purify)return purify.sanitize(h,_purifyConfig);return h.replace(/<script[\\s\\S]*?<\\/script>/gi,'');}var _root=document.getElementById('_root');var app={render:function(h){_root.innerHTML=sanitize(String(h));setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},text:function(s){_root.textContent=String(s).slice(0,2000);setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},resize:function(h){var px=Math.min(Math.max(parseInt(h)||200,40),600);parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:px},'*');},log:function(){}};var userCode=" + escaped + ";try{var fn=new Function('app',userCode);var r=fn(app);if(r&&typeof r.catch==='function')r.catch(function(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';});}catch(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';}setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},150);})();<\/script></body></html>";
 }
 
 const TwistComposerComponent = {
