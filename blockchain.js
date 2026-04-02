@@ -170,7 +170,11 @@ function fetchPostsByTag(tag, limit = 20) {
 //         or null/undefined for the first page.
 // Returns Promise<{ posts: post[], nextCursor: { author, permlink } | null }>
 function fetchRecentPosts(limit = 50, cursor = null) {
-  const query = { tag: "", limit: limit + 1 };  // fetch one extra to detect more
+  // Cursor-based pages include the anchor post again; fetch two extras so we
+  // can drop the anchor and still keep a full `limit` page while preserving a
+  // reliable hasMore signal.
+  const extra = cursor ? 2 : 1;
+  const query = { tag: "", limit: limit + extra };
   if (cursor) {
     query.start_author  = cursor.author;
     query.start_permlink = cursor.permlink;
@@ -180,14 +184,14 @@ function fetchRecentPosts(limit = 50, cursor = null) {
     [query]
   ).then(posts => {
     if (!posts || posts.length === 0) return { posts: [], nextCursor: null };
-    const hasMore = posts.length > limit;
-    const page = hasMore ? posts.slice(0, limit) : posts;
-    // When using a cursor the API repeats the start post — drop it.
-    const trimmed = cursor ? page.slice(1) : page;
+    // When using a cursor the API repeats the start post — drop it first.
+    const normalized = cursor ? posts.slice(1) : posts;
+    const hasMore = normalized.length > limit;
+    const page = hasMore ? normalized.slice(0, limit) : normalized;
     const nextCursor = hasMore
       ? { author: page[page.length - 1].author, permlink: page[page.length - 1].permlink }
       : null;
-    return { posts: trimmed, nextCursor };
+    return { posts: page, nextCursor };
   });
 }
 
@@ -195,7 +199,11 @@ function fetchRecentPosts(limit = 50, cursor = null) {
 // cursor: { author, permlink } for the next page, or null for first page.
 // Returns Promise<{ posts: post[], nextCursor: { author, permlink } | null }>
 function fetchPostsByUser(username, limit = 50, cursor = null) {
-  const query = { tag: username, limit: limit + 1 };
+  // Cursor-based pages include the anchor post again; fetch two extras so we
+  // can drop the anchor and still keep a full `limit` page while preserving a
+  // reliable hasMore signal.
+  const extra = cursor ? 2 : 1;
+  const query = { tag: username, limit: limit + extra };
   if (cursor) {
     query.start_author  = cursor.author;
     query.start_permlink = cursor.permlink;
@@ -205,14 +213,14 @@ function fetchPostsByUser(username, limit = 50, cursor = null) {
     [query]
   ).then(posts => {
     if (!posts || posts.length === 0) return { posts: [], nextCursor: null };
-    const hasMore = posts.length > limit;
-    const page = hasMore ? posts.slice(0, limit) : posts;
-    // When using a cursor the API repeats the start post — drop it.
-    const trimmed = cursor ? page.slice(1) : page;
+    // When using a cursor the API repeats the start post — drop it first.
+    const normalized = cursor ? posts.slice(1) : posts;
+    const hasMore = normalized.length > limit;
+    const page = hasMore ? normalized.slice(0, limit) : normalized;
     const nextCursor = hasMore
       ? { author: page[page.length - 1].author, permlink: page[page.length - 1].permlink }
       : null;
-    return { posts: trimmed, nextCursor };
+    return { posts: page, nextCursor };
   });
 }
 
@@ -545,6 +553,10 @@ function steemDate(ts) {
   return new Date(ts);
 }
 
+function postKey(post) {
+  return `${post.author}/${post.permlink}`;
+}
+
 // ============================================================
 // STEEMTWIST — blockchain helpers
 // ============================================================
@@ -644,8 +656,9 @@ function fetchTwistFeed(monthlyRoot, extraRoots = []) {
       .flat()
       .filter(p => {
         if (!p || !p.author) return false;
-        if (seen.has(p.permlink)) return false;
-        seen.add(p.permlink);
+        const key = postKey(p);
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
       })
       .sort((a, b) => steemDate(b.created) - steemDate(a.created));
@@ -1497,8 +1510,10 @@ function fetchFollowersPage(username, startFrom = "", limit = 50) {
       if (err || !result || result.length === 0) {
         return resolve({ users: [], nextCursor: "", hasMore: false });
       }
-      const users = result.map(r => r.follower);
-      const hasMore = result.length === limit;
+      const rawUsers = result.map(r => r.follower);
+      // When startFrom is provided the API may include that same account again.
+      const users = startFrom ? rawUsers.filter(u => u !== startFrom) : rawUsers;
+      const hasMore = users.length > 0 && result.length === limit;
       const nextCursor = hasMore ? users[users.length - 1] : "";
       resolve({ users, nextCursor, hasMore });
     });
@@ -1513,8 +1528,10 @@ function fetchFollowingPage(username, startFrom = "", limit = 50) {
       if (err || !result || result.length === 0) {
         return resolve({ users: [], nextCursor: "", hasMore: false });
       }
-      const users = result.map(r => r.following);
-      const hasMore = result.length === limit;
+      const rawUsers = result.map(r => r.following);
+      // When startFrom is provided the API may include that same account again.
+      const users = startFrom ? rawUsers.filter(u => u !== startFrom) : rawUsers;
+      const hasMore = users.length > 0 && result.length === limit;
       const nextCursor = hasMore ? users[users.length - 1] : "";
       resolve({ users, nextCursor, hasMore });
     });
@@ -1530,9 +1547,12 @@ function fetchFollowers(username) {
     return new Promise((resolve) => {
       steem.api.getFollowers(username, startFrom, "blog", LIMIT, (err, result) => {
         if (err || !result || result.length === 0) return resolve();
-        for (const row of result) collected.push(row.follower);
-        if (result.length < LIMIT) return resolve();
-        page(result[result.length - 1].follower).then(resolve);
+        const rows = startFrom
+          ? result.filter(r => r.follower !== startFrom)
+          : result;
+        for (const row of rows) collected.push(row.follower);
+        if (result.length < LIMIT || rows.length === 0) return resolve();
+        page(rows[rows.length - 1].follower).then(resolve);
       });
     });
   }
@@ -1548,9 +1568,12 @@ function fetchFollowing(username) {
     return new Promise((resolve) => {
       steem.api.getFollowing(username, startFrom, "blog", LIMIT, (err, result) => {
         if (err || !result || result.length === 0) return resolve();
-        for (const row of result) collected.push(row.following);
-        if (result.length < LIMIT) return resolve();
-        page(result[result.length - 1].following).then(resolve);
+        const rows = startFrom
+          ? result.filter(r => r.following !== startFrom)
+          : result;
+        for (const row of rows) collected.push(row.following);
+        if (result.length < LIMIT || rows.length === 0) return resolve();
+        page(rows[rows.length - 1].following).then(resolve);
       });
     });
   }
@@ -1778,8 +1801,9 @@ function fetchSecretTwists(username, monthsBack = 0) {
       .flat()
       .filter(p => {
         if (!p || !p.author) return false;
-        if (seen.has(p.permlink)) return false;
-        seen.add(p.permlink);
+        const key = postKey(p);
+        if (seen.has(key)) return false;
+        seen.add(key);
         // Keep only genuine Secret Twists
         try {
           const raw = p.json_metadata;

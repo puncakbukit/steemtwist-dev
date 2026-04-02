@@ -6,6 +6,10 @@
 const { createApp, ref, computed, onMounted, provide, inject, watch } = Vue;
 const { createRouter, createWebHashHistory, useRoute }                = VueRouter;
 
+function postKey(post) {
+  return `${post.author}/${post.permlink}`;
+}
+
 // ============================================================
 // ROUTE VIEWS
 // ============================================================
@@ -99,9 +103,9 @@ const ExploreView = {
         this.understreamCursor = Array.isArray(result) ? null : (result.nextCursor || null);
         this.monthsLoaded = 1;
 
-        const serverPermalinks = new Set(fresh.map(p => p.permlink));
+        const serverPostKeys = new Set(fresh.map(p => postKey(p)));
         const realTimeOnly = this.twists.filter(
-          p => p._firehose && !serverPermalinks.has(p.permlink)
+          p => p._firehose && !serverPostKeys.has(postKey(p))
         );
         this.twists      = [...realTimeOnly, ...fresh];
         this.pinnedTwist = pinned;
@@ -134,8 +138,8 @@ const ExploreView = {
             return;
           }
           const result = await fetchRecentPosts(50, this.understreamCursor);
-          const existingKeys = new Set(this.twists.map(t => t.permlink));
-          const fresh = result.posts.filter(t => !existingKeys.has(t.permlink));
+          const existingKeys = new Set(this.twists.map(t => postKey(t)));
+          const fresh = result.posts.filter(t => !existingKeys.has(postKey(t)));
           if (fresh.length === 0) {
             this.notify("No more posts found.", "info");
           } else {
@@ -145,8 +149,8 @@ const ExploreView = {
         } else {
           const root = getMonthlyRootOffset(this.monthsLoaded);
           const older = await fetchTwistFeedPage(root);
-          const existingKeys = new Set(this.twists.map(t => t.permlink));
-          const fresh = older.filter(t => !existingKeys.has(t.permlink));
+          const existingKeys = new Set(this.twists.map(t => postKey(t)));
+          const fresh = older.filter(t => !existingKeys.has(postKey(t)));
           if (fresh.length === 0) {
             this.notify("No twists found in that month.", "info");
           } else {
@@ -450,10 +454,6 @@ const HomeView = {
     hasMore()      { return this.pagedTwists.length < this.sortedTwists.length; }
   },
 
-  watch: {
-    sortMode() { this.page = 1; }
-  },
-
   async created() {
     await this.loadFeed();
   },
@@ -463,6 +463,7 @@ const HomeView = {
   },
 
   watch: {
+    sortMode() { this.page = 1; },
     username() {
       this.stopFirehose();
       this.loadFeed();
@@ -477,8 +478,8 @@ const HomeView = {
       try {
         const root = getMonthlyRootOffset(this.monthsLoaded);
         const older = await fetchTwistFeedPage(root);
-        const existingKeys = new Set(this.twists.map(t => t.permlink));
-        const fresh = older.filter(t => !existingKeys.has(t.permlink));
+        const existingKeys = new Set(this.twists.map(t => postKey(t)));
+        const fresh = older.filter(t => !existingKeys.has(postKey(t)));
         if (fresh.length === 0) {
           this.notify("No twists found in that month.", "info");
         } else {
@@ -539,7 +540,8 @@ const HomeView = {
         const merged = [];
         for (const posts of results) {
           for (const p of posts) {
-            if (!seen.has(p.permlink)) { seen.add(p.permlink); merged.push(p); }
+            const key = postKey(p);
+            if (!seen.has(key)) { seen.add(key); merged.push(p); }
           }
         }
         this.twists = merged;
@@ -872,8 +874,8 @@ const ProfileView = {
         const result = this.understreamOn
           ? await fetchPostsByUser(user, 50, this.nextCursor)
           : await fetchTwistsByUser(user, this.monthlyRoot, { startFrom: this.nextCursor, limit: 50 });
-        const existingKeys = new Set(this.userTwists.map(t => t.permlink));
-        const fresh = result.posts.filter(t => !existingKeys.has(t.permlink));
+        const existingKeys = new Set(this.userTwists.map(t => postKey(t)));
+        const fresh = result.posts.filter(t => !existingKeys.has(postKey(t)));
         if (fresh.length === 0) {
           this.notify("No older posts found.", "info");
         } else {
@@ -1755,8 +1757,8 @@ const SecretTwistView = {
         // Fetch one more month back and merge (without resetting scroll/page).
         const nextMonthsBack = this.historyMonthsBack + 1;
         const fresh = await fetchSecretTwists(this.username, nextMonthsBack);
-        const existingKeys = new Set(this.posts.map(p => p.permlink));
-        const added = fresh.filter(p => !existingKeys.has(p.permlink));
+        const existingKeys = new Set(this.posts.map(p => postKey(p)));
+        const added = fresh.filter(p => !existingKeys.has(postKey(p)));
         if (added.length === 0) {
           this.notify("No older Secret Twists found.", "info");
         } else {
