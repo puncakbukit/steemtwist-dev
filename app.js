@@ -1743,7 +1743,18 @@ const SecretTwistView = {
       this.historyMonthsBack = Math.max(0, Number(monthsBack) || 0);
       this.monthsLoaded = this.historyMonthsBack + 1;
       try {
-        this.posts = await fetchSecretTwists(this.username, this.historyMonthsBack);
+        let posts = await fetchSecretTwists(this.username, this.historyMonthsBack);
+        // If the current month is empty, automatically widen to recent history
+        // so users with older Secret Twists don't land on a blank inbox.
+        if (posts.length === 0 && this.historyMonthsBack === 0) {
+          posts = await fetchSecretTwists(this.username, 2);
+          if (posts.length > 0) {
+            this.historyMonthsBack = 2;
+            this.monthsLoaded = 3;
+            this.notify("No Secret Twists this month — showing last 3 months.", "info");
+          }
+        }
+        this.posts = posts;
       } catch {
         this.notify("Could not load Secret Twists.", "error");
       }
@@ -1898,15 +1909,15 @@ const SecretTwistView = {
                      border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
             >Load more</button>
           </div>
-          <!-- Load older month from blockchain when current pages are exhausted -->
-          <div v-else-if="activeList.length > 0" style="text-align:center;margin:16px 0;">
-            <button
-              @click="loadOlderMonth"
-              :disabled="loadingOlderMonth"
-              style="background:#1a1030;color:#a855f7;border:1px solid #3b1f5e;
-                     border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-            >{{ loadingOlderMonth ? "Loading…" : "Load older month" }}</button>
-          </div>
+	          <!-- Load older month from blockchain -->
+	          <div v-else style="text-align:center;margin:16px 0;">
+	            <button
+	              @click="loadOlderMonth"
+	              :disabled="loadingOlderMonth"
+	              style="background:#1a1030;color:#a855f7;border:1px solid #3b1f5e;
+	                     border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+	            >{{ loadingOlderMonth ? "Loading…" : "Load older month" }}</button>
+	          </div>
         </template>
 
         <!-- Privacy notice -->
