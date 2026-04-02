@@ -1666,6 +1666,7 @@ const SecretTwistView = {
       tab:               "inbox",  // "inbox" | "sent" | "compose"
       page:              1,
       pageSize:          20,
+      historyMonthsBack: 0,        // 0=current month, 2=last 3 months, etc.
       monthsLoaded:      1,        // how many calendar months fetched so far
       loadingOlderMonth: false     // true while fetching an older month
     };
@@ -1714,6 +1715,7 @@ const SecretTwistView = {
       this.posts        = [];
       this.tab          = "inbox";
       this.page         = 1;
+      this.historyMonthsBack = 0;
       this.monthsLoaded = 1;
       if (newVal) {
         this.loadPosts();
@@ -1729,13 +1731,17 @@ const SecretTwistView = {
   methods: {
     async loadPosts() {
       if (!this.username) { this.loading = false; return; }
-      this.loading      = true;
-      this.page         = 1;
-      this.monthsLoaded = 1;
+      await this.applyHistoryRange(0);
+    },
+
+    async applyHistoryRange(monthsBack) {
+      if (!this.username) return;
+      this.loading = true;
+      this.page = 1;
+      this.historyMonthsBack = Math.max(0, Number(monthsBack) || 0);
+      this.monthsLoaded = this.historyMonthsBack + 1;
       try {
-        // Always start with the current month only; user can load more months
-        // with the "Load older month" button.
-        this.posts = await fetchSecretTwists(this.username, 0);
+        this.posts = await fetchSecretTwists(this.username, this.historyMonthsBack);
       } catch {
         this.notify("Could not load Secret Twists.", "error");
       }
@@ -1746,10 +1752,9 @@ const SecretTwistView = {
       if (this.loadingOlderMonth) return;
       this.loadingOlderMonth = true;
       try {
-        // Fetch one more month back (monthsLoaded is already the count
-        // already fetched, so passing it as monthsBack fetches up to that
-        // offset and deduplicates with what we have).
-        const fresh = await fetchSecretTwists(this.username, this.monthsLoaded);
+        // Fetch one more month back and merge (without resetting scroll/page).
+        const nextMonthsBack = this.historyMonthsBack + 1;
+        const fresh = await fetchSecretTwists(this.username, nextMonthsBack);
         const existingKeys = new Set(this.posts.map(p => p.permlink));
         const added = fresh.filter(p => !existingKeys.has(p.permlink));
         if (added.length === 0) {
@@ -1757,11 +1762,18 @@ const SecretTwistView = {
         } else {
           this.posts = [...this.posts, ...added];
         }
+        this.historyMonthsBack = nextMonthsBack;
         this.monthsLoaded++;
       } catch {
         this.notify("Could not load older Secret Twists.", "error");
       }
       this.loadingOlderMonth = false;
+    },
+
+    async jumpHistory(monthsStep) {
+      if (this.loading) return;
+      const next = Math.min(this.historyMonthsBack + Math.max(1, Number(monthsStep) || 1), 120);
+      await this.applyHistoryRange(next);
     },
 
     async handleSend({ recipient, message }) {
@@ -1790,6 +1802,9 @@ const SecretTwistView = {
         <h2 style="margin:0;color:#e8e0f0;font-size:18px;">🔒 Secret Twists</h2>
         <span style="font-size:13px;color:#5a4e70;">Private Signals</span>
       </div>
+      <div style="margin:-6px 0 12px;color:#8f7cab;font-size:12px;">
+        Showing current month by default. Use History to revisit older Secret Twists.
+      </div>
 
       <!-- Not logged in -->
       <div v-if="!username" style="
@@ -1814,6 +1829,34 @@ const SecretTwistView = {
               borderColor: tab === t.key ? '#a855f7' : '#3b1f5e'
             }"
           >{{ t.label }}{{ t.key === 'inbox' && inbox.length > 0 ? ' (' + inbox.length + ')' : '' }}</button>
+        </div>
+
+        <div v-if="tab !== 'compose'" style="display:flex;gap:6px;margin:-8px 0 14px;flex-wrap:wrap;align-items:center;">
+          <span style="font-size:12px;color:#8f7cab;margin-right:2px;">History:</span>
+          <button
+            v-for="r in [
+              { label: 'This month', months: 0 },
+              { label: 'Last 3 months', months: 2 },
+              { label: 'Last 12 months', months: 11 }
+            ]"
+            :key="r.label"
+            @click="applyHistoryRange(r.months)"
+            :disabled="loading"
+            :style="{
+              borderRadius:'999px', padding:'4px 10px', fontSize:'12px', border:'1px solid',
+              background: historyMonthsBack === r.months ? '#2a1a46' : '#1a1030',
+              color: historyMonthsBack === r.months ? '#d8b4fe' : '#9b8db0',
+              borderColor: historyMonthsBack === r.months ? '#a855f7' : '#3b1f5e',
+              cursor: loading ? 'wait' : 'pointer'
+            }"
+          >{{ r.label }}</button>
+          <button
+            @click="jumpHistory(6)"
+            :disabled="loading"
+            style="border-radius:999px;padding:4px 10px;font-size:12px;border:1px solid #3b1f5e;
+                   background:#1a1030;color:#9b8db0;cursor:pointer;"
+            title="Jump back six more months"
+          >↩︎ Jump back 6 months</button>
         </div>
 
         <!-- Compose tab -->
