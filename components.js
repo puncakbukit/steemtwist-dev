@@ -1228,6 +1228,7 @@ const LoadingSpinnerComponent = {
 const PREVIEW_LENGTH       = 280;
 const THREAD_REPLY_THRESHOLD = 3;
 const REGULAR_TWIST_MEDIA_LIMIT = 4;
+const IMAGE_ALT_TEXT_MAX_LENGTH = 80;
 
 // Shared markdown renderer — configured once, reused everywhere.
 // marked.parse() is synchronous and returns sanitised HTML.
@@ -1441,7 +1442,7 @@ const ReplyCardComponent = {
           this.lastError = this.replyUploadError;
           return;
         }
-        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        const alt = makeImageAltText(file.name);
         this.insertReplyAtCursor(`![${alt}](${res.url})`);
       });
     },
@@ -3363,7 +3364,7 @@ const TwistCardComponent = {
           this.lastError = this.replyUploadError;
           return;
         }
-        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        const alt = makeImageAltText(file.name);
         this.insertReplyAtCursor(`![${alt}](${res.url})`);
       });
     },
@@ -4345,6 +4346,14 @@ function countMediaEmbeds(message) {
   return patterns.reduce((sum, pattern) => sum + ((text.match(pattern) || []).length), 0);
 }
 
+function makeImageAltText(fileName) {
+  const base = String(fileName || "image")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim();
+  return (base || "image").slice(0, IMAGE_ALT_TEXT_MAX_LENGTH);
+}
+
 function buildLiveTwistSandboxDoc(userCode) {
   const escaped = JSON.stringify(userCode || "");
   const escapedPurifyConfig = LIVE_TWIST_PURIFY_CONFIG;
@@ -4441,7 +4450,7 @@ const TwistComposerComponent = {
           this.notify(this.uploadError, "error");
           return;
         }
-        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        const alt = makeImageAltText(file.name);
         this.insertAtCursor(`![${alt}](${res.url})`);
         this.notify("Image uploaded and inserted.", "success");
       });
@@ -4888,7 +4897,7 @@ const SecretTwistComposerComponent = {
           this.notify(this.uploadError, "error");
           return;
         }
-        const alt = (file.name || "image").replace(/\.[^.]+$/, "");
+        const alt = makeImageAltText(file.name);
         this.insertAtCursor(`![${alt}](${res.url})`);
         this.notify("Image uploaded and inserted.", "success");
       });
@@ -5039,6 +5048,8 @@ const SecretTwistCardComponent = {
       showReplyBox:    false,
       replyMessage:    draftStorage.load("secret_reply_" + this.post.permlink, ""),
       replyPreviewMode: false,
+      isUploadingReplyImage: false,
+      replyUploadError: "",
       isReplying:      false,
       replyError:      "",
       replies:        [],      // decrypted nested replies
@@ -5067,6 +5078,10 @@ const SecretTwistCardComponent = {
     otherParty()   { return this.isSender ? this.recipient : this.post.author; },
     avatarUrl()    { return `https://steemitimages.com/u/${this.post.author}/avatar/small`; },
     replyCount()      { return this.post.children || 0; },
+    replyMediaCount() { return countMediaEmbeds(this.replyMessage); },
+    mediaLimit()      { return REGULAR_TWIST_MEDIA_LIMIT; },
+    replyMediaLimitExceeded() { return this.replyMediaCount > this.mediaLimit; },
+    canUploadReplyImage() { return this.replyMediaCount < this.mediaLimit; },
     replyPreviewHtml() {
       return this.replyMessage.trim()
         ? DOMPurify.sanitize(renderMarkdown(this.replyMessage))
@@ -5090,7 +5105,48 @@ const SecretTwistCardComponent = {
   watch: {
     replyMessage(v) { draftStorage.save("secret_reply_" + this.post.permlink, v); }
   },
-    methods: {
+  methods: {
+    insertReplyAtCursor(text) {
+      const ta = this.$refs.secretReplyTextarea;
+      if (!ta) {
+        this.replyMessage = (this.replyMessage ? this.replyMessage + "\n" : "") + text;
+        return;
+      }
+      const start = ta.selectionStart ?? this.replyMessage.length;
+      const end   = ta.selectionEnd ?? this.replyMessage.length;
+      this.replyMessage = this.replyMessage.slice(0, start) + text + this.replyMessage.slice(end);
+      this.$nextTick(() => {
+        ta.focus();
+        const pos = start + text.length;
+        ta.selectionStart = pos;
+        ta.selectionEnd   = pos;
+      });
+    },
+    onReplyImageSelected(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      this.uploadReplyImage(file);
+    },
+    uploadReplyImage(file) {
+      if (this.isUploadingReplyImage) return;
+      if (!this.canUploadReplyImage) {
+        this.replyError = `A secret twist reply can include up to ${this.mediaLimit} images/videos.`;
+        return;
+      }
+      this.replyUploadError = "";
+      this.isUploadingReplyImage = true;
+      uploadImageToSteemit(this.username, file, (res) => {
+        this.isUploadingReplyImage = false;
+        if (!res.success) {
+          this.replyUploadError = res.error || "Image upload failed.";
+          this.replyError = this.replyUploadError;
+          return;
+        }
+        const alt = makeImageAltText(file.name);
+        this.insertReplyAtCursor(`![${alt}](${res.url})`);
+      });
+    },
     decrypt() {
       if (!this.canDecrypt || this.isDecrypting) return;
       this.isDecrypting = true;
@@ -5130,6 +5186,10 @@ const SecretTwistCardComponent = {
     sendReply() {
       const text = this.replyMessage.trim();
       if (!text || !this.isParticipant || !this.hasKeychain || this.isReplying) return;
+      if (this.replyMediaLimitExceeded) {
+        this.replyError = `A secret twist reply can include up to ${this.mediaLimit} images/videos.`;
+        return;
+      }
       this.isReplying  = true;
       this.replyError  = "";
       replySecretTwist(
@@ -5141,6 +5201,7 @@ const SecretTwistCardComponent = {
             this.replyMessage     = "";
             this.showReplyBox     = false;
             this.replyPreviewMode = false;
+            this.replyUploadError = "";
             draftStorage.clear("secret_reply_" + this.post.permlink);
             // Reload replies after a short delay for indexing
             setTimeout(() => {
@@ -5266,6 +5327,7 @@ const SecretTwistCardComponent = {
 
         <textarea
           v-show="!replyPreviewMode"
+          ref="secretReplyTextarea"
           v-model="replyMessage"
           placeholder="Write an encrypted reply… (markdown supported)"
           style="
@@ -5276,6 +5338,23 @@ const SecretTwistCardComponent = {
           "
           @keydown.ctrl.enter="sendReply"
         ></textarea>
+
+        <div v-show="!replyPreviewMode" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input
+            ref="replyImageInput"
+            type="file"
+            accept="image/*"
+            style="display:none;"
+            @change="onReplyImageSelected"
+          />
+          <button
+            @click="$refs.replyImageInput.click()"
+            :disabled="!username || !hasKeychain || isUploadingReplyImage || !canUploadReplyImage"
+            :title="!canUploadReplyImage ? ('Image limit reached (' + mediaLimit + ').') : ''"
+            style="padding:6px 12px;margin:0;background:#0f0a1e;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+          >{{ isUploadingReplyImage ? "Uploading…" : "📷 Upload image" }}</button>
+          <span v-if="replyUploadError" style="font-size:12px;color:#fca5a5;">{{ replyUploadError }}</span>
+        </div>
 
         <div
           v-show="replyPreviewMode"
@@ -5289,10 +5368,12 @@ const SecretTwistCardComponent = {
         ></div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
-          <span style="font-size:12px;color:#5a4e70;">{{ replyMessage.length }} chars</span>
+          <span :style="{ fontSize:'12px', color: replyMediaLimitExceeded ? '#fca5a5' : '#5a4e70' }">
+            {{ replyMessage.length }} chars · media {{ replyMediaCount }}/{{ mediaLimit }}
+          </span>
           <button
             @click="sendReply"
-            :disabled="!replyMessage.trim() || isReplying"
+            :disabled="!replyMessage.trim() || isReplying || replyMediaLimitExceeded"
             style="background:linear-gradient(135deg,#6d28d9,#a21caf);padding:5px 14px;font-size:12px;margin:0;"
           >{{ isReplying ? "Sending…" : "Send 🔒" }}</button>
         </div>
