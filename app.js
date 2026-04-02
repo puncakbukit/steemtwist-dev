@@ -1743,11 +1743,11 @@ const SecretTwistView = {
       this.historyMonthsBack = Math.max(0, Number(monthsBack) || 0);
       this.monthsLoaded = this.historyMonthsBack + 1;
       try {
-        let posts = await fetchSecretTwists(this.username, this.historyMonthsBack);
+        let posts = await fetchSecretTwistsWithNested(this.username, this.historyMonthsBack);
         // If the current month is empty, automatically widen to recent history
         // so users with older Secret Twists don't land on a blank inbox.
         if (posts.length === 0 && this.historyMonthsBack === 0) {
-          posts = await fetchSecretTwists(this.username, 2);
+          posts = await fetchSecretTwistsWithNested(this.username, 2);
           if (posts.length > 0) {
             this.historyMonthsBack = 2;
             this.monthsLoaded = 3;
@@ -1767,7 +1767,7 @@ const SecretTwistView = {
       try {
         // Fetch one more month back and merge (without resetting scroll/page).
         const nextMonthsBack = this.historyMonthsBack + 1;
-        const fresh = await fetchSecretTwists(this.username, nextMonthsBack);
+        const fresh = await fetchSecretTwistsWithNested(this.username, nextMonthsBack);
         const existingKeys = new Set(this.posts.map(p => postKey(p)));
         const added = fresh.filter(p => !existingKeys.has(postKey(p)));
         if (added.length === 0) {
