@@ -1733,10 +1733,6 @@ const SecretTwistView = {
   },
 
   methods: {
-    secretCardDomId(key) {
-      return key ? `secret-twist-card-${encodeURIComponent(key)}` : "";
-    },
-
     async loadPosts() {
       if (!this.username) { this.loading = false; return; }
       await this.applyHistoryRange(0);
@@ -1822,13 +1818,6 @@ const SecretTwistView = {
       this.tab = "sent";
       this.page = Math.max(1, Math.ceil((idx + 1) / this.pageSize));
       this.highlightedParentKey = parent.key;
-      const targetId = this.secretCardDomId(parent.key);
-      this.$nextTick(() => {
-        requestAnimationFrame(() => {
-          const el = document.getElementById(targetId);
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      });
       setTimeout(() => {
         if (this.highlightedParentKey === parent.key) this.highlightedParentKey = "";
       }, 5000);
@@ -1929,7 +1918,6 @@ const SecretTwistView = {
             :has-keychain="hasKeychain"
             :show-parent-link="tab === 'inbox'"
             :highlight-key="highlightedParentKey"
-            :dom-id="secretCardDomId(postKey(post))"
             @jump-to-parent="jumpToParentInSent"
           ></secret-twist-card-component>
 
