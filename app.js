@@ -1733,6 +1733,16 @@ const SecretTwistView = {
   },
 
   methods: {
+    withLoadTimeout(promise, ms = 15000, fallbackValue = []) {
+      let timer = null;
+      const timeout = new Promise(resolve => {
+        timer = setTimeout(() => resolve(fallbackValue), ms);
+      });
+      return Promise.race([promise, timeout]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+    },
+
     secretCardDomId(key) {
       return key ? `secret-twist-card-${encodeURIComponent(key)}` : "";
     },
@@ -1749,11 +1759,19 @@ const SecretTwistView = {
       this.historyMonthsBack = Math.max(0, Number(monthsBack) || 0);
       this.monthsLoaded = this.historyMonthsBack + 1;
       try {
-        let posts = await fetchSecretTwistsWithNested(this.username, this.historyMonthsBack);
+        let posts = await this.withLoadTimeout(
+          fetchSecretTwistsWithNested(this.username, this.historyMonthsBack),
+          15000,
+          []
+        );
         // If the current month is empty, automatically widen to recent history
         // so users with older Secret Twists don't land on a blank inbox.
         if (posts.length === 0 && this.historyMonthsBack === 0) {
-          posts = await fetchSecretTwistsWithNested(this.username, 2);
+          posts = await this.withLoadTimeout(
+            fetchSecretTwistsWithNested(this.username, 2),
+            15000,
+            []
+          );
           if (posts.length > 0) {
             this.historyMonthsBack = 2;
             this.monthsLoaded = 3;
