@@ -1872,6 +1872,9 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
   const rpcTimeoutMs = Number.isFinite(options.timeoutMs)
     ? Math.max(1000, options.timeoutMs)
     : 12000;
+  const maxRootThreadsToExpand = Number.isFinite(options.maxRootThreadsToExpand)
+    ? Math.max(0, options.maxRootThreadsToExpand)
+    : 0;
 
   // Build the list of roots to fetch: current month first, then older ones.
   const roots = [];
@@ -1910,8 +1913,13 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
     // make the Private page appear to load forever as global volume grows.
     const relevantRoots = rootPosts.filter(p => isSecretTwistForUser(p, userLC));
 
+    // Keep initial inbox/sent loading deterministic: expand nested threads only
+    // when explicitly requested via options (default: 0 expansions).
+    const nestedRoots = maxRootThreadsToExpand > 0
+      ? relevantRoots.slice(0, maxRootThreadsToExpand)
+      : [];
     const nestedArrays = await Promise.all(
-      relevantRoots.map(p =>
+      nestedRoots.map(p =>
         withTimeout(
           fetchSecretTwistThreadReplies(
             p.author,
