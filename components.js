@@ -5040,7 +5040,8 @@ const SecretTwistCardComponent = {
     hasKeychain: { type: Boolean, default: false },
     depth:       { type: Number,  default: 0 },   // nesting depth for replies
     showParentLink: { type: Boolean, default: false },
-    highlightKey:   { type: String, default: "" }
+    highlightKey:   { type: String, default: "" },
+    domId:          { type: String, default: "" }
   },
   data() {
     return {
@@ -5231,7 +5232,7 @@ const SecretTwistCardComponent = {
     }
   },
   template: `
-    <div :style="{
+    <div :id="domId || null" :style="{
       background:'#1a1030', border:'1px solid #3b1f5e', borderRadius:'12px',
       padding:'14px 16px', margin:'10px auto', maxWidth:'600px', textAlign:'left',
       borderColor: isHighlighted ? '#facc15' : '#3b1f5e',
