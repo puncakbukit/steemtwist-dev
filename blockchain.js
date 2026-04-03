@@ -1774,6 +1774,16 @@ function isSecretTwistPost(post) {
   return parseSecretMeta(post).type === "secret_twist";
 }
 
+// True when a Secret Twist is part of the given user's private inbox/sent set.
+// A post belongs to a user if they authored it OR it targets them in metadata.
+function isSecretTwistForUser(post, username) {
+  const user = (username || "").toLowerCase();
+  if (!user || !post) return false;
+  const author = (post.author || "").toLowerCase();
+  const to = (parseSecretMeta(post).to || "").toLowerCase();
+  return author === user || to === user;
+}
+
 // Fetch all nested secret replies for a parent secret twist.
 //
 // Guards:
@@ -1845,6 +1855,9 @@ function fetchSecretTwistThreadReplies(author, permlink, options = {}) {
 //
 // Returns Promise<post[]> sorted newest-first.
 function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
+  const userLC = (username || "").toLowerCase();
+  if (!userLC) return Promise.resolve([]);
+
   // Build the list of roots to fetch: current month first, then older ones.
   const roots = [];
   for (let i = 0; i <= monthsBack; i++) {
@@ -1866,8 +1879,14 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
       .flat()
       .filter(p => !!p && !!p.author && !!p.permlink && isSecretTwistPost(p));
 
+    // Performance guard:
+    // Only recurse into threads that are relevant to the logged-in user.
+    // Without this, we walk every Secret Twist thread for the month, which can
+    // make the Private page appear to load forever as global volume grows.
+    const relevantRoots = rootPosts.filter(p => isSecretTwistForUser(p, userLC));
+
     const nestedArrays = await Promise.all(
-      rootPosts.map(p =>
+      relevantRoots.map(p =>
         fetchSecretTwistThreadReplies(
           p.author,
           p.permlink,
@@ -1880,13 +1899,13 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
     );
 
     const seen = new Set();
-    return [...rootPosts, ...nestedArrays.flat()]
+    return [...relevantRoots, ...nestedArrays.flat()]
       .filter(p => {
         if (!p || !p.author || !p.permlink) return false;
         const key = postKey(p);
         if (seen.has(key)) return false;
         seen.add(key);
-        return isSecretTwistPost(p);
+        return isSecretTwistPost(p) && isSecretTwistForUser(p, userLC);
       })
       .sort((a, b) => steemDate(b.created) - steemDate(a.created));
   });
