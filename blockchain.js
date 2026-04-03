@@ -1774,6 +1774,18 @@ function isSecretTwistPost(post) {
   return parseSecretMeta(post).type === "secret_twist";
 }
 
+// Resolve a promise with a fallback value when it exceeds `ms`.
+// This prevents UI hangs when a public RPC never returns a callback.
+function withTimeout(promise, ms, fallbackValue) {
+  let timer = null;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve(fallbackValue), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 // True when a Secret Twist is part of the given user's private inbox/sent set.
 // A post belongs to a user if they authored it OR it targets them in metadata.
 function isSecretTwistForUser(post, username) {
@@ -1857,6 +1869,9 @@ function fetchSecretTwistThreadReplies(author, permlink, options = {}) {
 function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
   const userLC = (username || "").toLowerCase();
   if (!userLC) return Promise.resolve([]);
+  const rpcTimeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(1000, options.timeoutMs)
+    : 12000;
 
   // Build the list of roots to fetch: current month first, then older ones.
   const roots = [];
@@ -1866,10 +1881,20 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
 
   return Promise.all(
     roots.map(root =>
-      fetchReplies(TWIST_CONFIG.ROOT_ACCOUNT, root)
+      withTimeout(
+        fetchReplies(TWIST_CONFIG.ROOT_ACCOUNT, root),
+        rpcTimeoutMs,
+        []
+      )
         .then(replies =>
           Promise.all(
-            replies.map(r => fetchPost(r.author, r.permlink).catch(() => r))
+            replies.map(r =>
+              withTimeout(
+                fetchPost(r.author, r.permlink).catch(() => r),
+                rpcTimeoutMs,
+                r
+              )
+            )
           )
         )
         .catch(() => [])
@@ -1887,14 +1912,18 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
 
     const nestedArrays = await Promise.all(
       relevantRoots.map(p =>
-        fetchSecretTwistThreadReplies(
-          p.author,
-          p.permlink,
-          {
-            maxDepth: options.maxDepth,
-            maxNodes: options.maxNodes
-          }
-        ).catch(() => [])
+        withTimeout(
+          fetchSecretTwistThreadReplies(
+            p.author,
+            p.permlink,
+            {
+              maxDepth: options.maxDepth,
+              maxNodes: options.maxNodes
+            }
+          ).catch(() => []),
+          rpcTimeoutMs,
+          []
+        )
       )
     );
 
