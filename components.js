@@ -1933,7 +1933,9 @@ const ThreadComponent = {
   props: {
     author:   { type: String,  required: true },
     permlink: { type: String,  required: true },
-    depth:    { type: Number,  default: 0 }
+    depth:    { type: Number,  default: 0 },
+    // Bumped by parent after posting a reply so this component re-fetches.
+    refreshKey: { type: Number, default: 0 }
   },
   data() {
     return {
@@ -1943,23 +1945,55 @@ const ThreadComponent = {
     };
   },
   async created() {
-    try {
-      const replies = await fetchReplies(this.author, this.permlink);
-      // getContentReplies returns empty active_votes (a Steem node quirk that
-      // affects both the feed root and individual posts). Enrich active_votes
-      // only via a parallel getContent call so the Love count is correct.
-      // All other fields (body, children, etc.) are already populated.
-      this.replies = await Promise.all(
-        replies.map(r =>
-          fetchPost(r.author, r.permlink)
-            .then(full => ({ ...r, active_votes: full.active_votes || [] }))
-            .catch(() => r)
-        )
-      );
-    } catch (e) {
-      this.loadError = "Could not load replies.";
+    await this.loadReplies();
+  },
+  watch: {
+    // Re-fetch replies when parent signals new activity.
+    async refreshKey() {
+      await this.loadReplies({ force: true, retry: true });
     }
-    this.loading = false;
+  },
+  methods: {
+    async loadReplies(options = {}) {
+      const force = !!options.force;
+      const retry = !!options.retry;
+      if (this.loading && !force) return;
+      this.loading = true;
+      this.loadError = "";
+      try {
+        const hydrateReplies = async (items) => Promise.all(
+          items.map(r =>
+            fetchPost(r.author, r.permlink)
+              .then(full => ({ ...r, active_votes: full.active_votes || [] }))
+              .catch(() => r)
+          )
+        );
+        const replies = await fetchReplies(this.author, this.permlink);
+        // getContentReplies returns empty active_votes (a Steem node quirk that
+        // affects both the feed root and individual posts). Enrich active_votes
+        // only via a parallel getContent call so the Love count is correct.
+        // All other fields (body, children, etc.) are already populated.
+        const hydrated = await hydrateReplies(replies);
+        this.replies = hydrated;
+
+        // Steem nodes can lag briefly after a successful broadcast; retry a
+        // few times so the new reply appears without requiring a full refresh.
+        if (retry && this.refreshKey > 0 && hydrated.length < this.refreshKey) {
+          let attempts = 0;
+          const maxAttempts = 4;
+          const retryDelayMs = 1200;
+          while (attempts < maxAttempts && this.replies.length < this.refreshKey) {
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            const later = await fetchReplies(this.author, this.permlink);
+            this.replies = await hydrateReplies(later);
+          }
+        }
+      } catch (e) {
+        this.loadError = "Could not load replies.";
+      }
+      this.loading = false;
+    }
   },
   template: `
     <div style="margin-top:8px;border-top:2px solid #2e2050;padding-top:8px;">
@@ -4060,6 +4094,7 @@ const TwistCardComponent = {
         v-if="showThread"
         :author="post.author"
         :permlink="post.permlink"
+        :refresh-key="replyCount"
       ></thread-component>
 
     </div>
