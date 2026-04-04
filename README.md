@@ -66,6 +66,7 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 ### Twists
 - 📝 **Post twists** up to 280 characters (**media excluded**) with **markdown** and real-time **Write / Preview** tab
 - 📷 **Image upload** for twists/replies/secret twists via Steemit ImageHoster (signed with Keychain posting key); max **4 media items** per post/reply
+- 💾 **Draft autosave** — twist, live twist, and secret twist composers persist local drafts in `localStorage`
 - 💬 **Thread replies** — recursive; auto-expanded two levels deep; Write / Preview on reply box
 - ✏️ **Edit** — re-broadcast with updated body; card updates instantly
 - 🗑️ **Delete** — true `delete_comment` (no votes/children) or body-blank fallback; removed from feed instantly
@@ -282,7 +283,7 @@ Steem Keychain's `requestBroadcast` rejects `vote` operations bundled with other
 |---|---|---|
 | **Home** | `fetchTwistsByUser` per followed Twister | `fetchPostsByUser` per followed Twister |
 | **Explore** | `fetchTwistFeed` on monthly root | `fetchRecentPosts` — all recent Steem posts |
-| **Profile** | `fetchTwistsByUser` (tw- this month) | `fetchPostsByUser` (full blog) |
+| **Profile** | `fetchTwistsByUser` (all historical `tw-` posts, paged) | `fetchPostsByUser` (full blog) |
 | **Signals** | Only `tw-` permlinks (+ follows) | All Steem account history |
 
 ---
@@ -347,10 +348,11 @@ steemtwist/
 
 ### Posts
 - `fetchPost(author, permlink)` — always returns populated `active_votes`
-- `fetchReplies(author, permlink)` — direct replies; enrich with `fetchPost` for vote counts
+- `fetchReplies(author, permlink)` — direct replies (raw `getContentReplies` result)
+- `fetchAllReplies(author, permlink)` — recursively fetches all nested replies and enriches each with `getContent`
 - `fetchRecentPosts(limit)` — all recent Steem posts, no tag filter (Explore Understream)
-- `fetchPostsByTag(tag, limit)` — by tag
-- `fetchPostsByUser(username, limit)` — full blog (Profile / Home Understream)
+- `fetchPostsByTag(tag, limit)` — by tag (`getDiscussionsByCreated`)
+- `fetchPostsByUser(username, limit, cursor)` — full blog with cursor paging (Profile / Home Understream)
 
 ### SteemTwist feed
 - `TWIST_CONFIG` — `ROOT_ACCOUNT`, `ROOT_PREFIX`, `SECRET_ROOT_PREFIX`, `TAG`, `POST_PREFIX`, `TAGS`, `DAPP_URL`
@@ -358,7 +360,8 @@ steemtwist/
 - `generateTwistPermlink(username)` → `tw-YYYYMMDD-HHMMSS-username`
 - `generateSecretTwistPermlink(username)` → `st-YYYYMMDD-HHMMSS-username`
 - `fetchTwistFeed(monthlyRoot)` — `getContentReplies` + parallel `fetchPost` enrichment
-- `fetchTwistsByUser(username, monthlyRoot)` — account history scan, stops at month boundary
+- `fetchTwistFeedPage(root)` — one older monthly root page, newest-first
+- `fetchTwistsByUser(username, monthlyRoot, { startFrom, limit, maxScan })` — account-history scan for `tw-` posts with optional cursor paging and scan cap; when `monthlyRoot` is `null`, returns twists across all months
 - `buildZeroPayoutOps(...)` — `[comment, comment_options]` with payouts disabled
 - `postTwist(username, message, callback)` — post new twist
 - `uploadImageToSteemit(username, file, callback)` — uploads image bytes to Steemit ImageHoster after Keychain signing
@@ -383,7 +386,7 @@ steemtwist/
 
 ### Signals
 - `classifySignalEntry(seqNum, item, username)` → `love | reply | mention | follow | retwist | secret_twist`
-- `fetchSignals(username)` — latest 500 history entries
+- `fetchSignals(username, startFrom)` — scans up to 1000 history entries per call with cursor-based paging
 - `stripSignalBody(body)` — caps input at 10 000 chars before regex processing to prevent ReDoS; truncates output to 100 chars
 
 ### Follow lists
