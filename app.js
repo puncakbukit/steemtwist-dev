@@ -175,8 +175,7 @@ const ExploreView = {
         this.isPosting = false;
         if (res.success) {
           this.notify("Twist posted! 🌀", "success");
-          await new Promise(r => setTimeout(r, 2000));
-          await this.loadFeed();
+          await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to post twist.", "error");
         }
@@ -192,8 +191,7 @@ const ExploreView = {
           this.notify("Live Twist published! ⚡", "success");
           // Clear the live composer draft now that it's on-chain
           try { localStorage.removeItem("st_draft_live_composer"); } catch {}
-          await new Promise(r => setTimeout(r, 2000));
-          await this.loadFeed();
+          await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to publish Live Twist.", "error");
         }
@@ -564,8 +562,7 @@ const HomeView = {
         this.isPosting = false;
         if (res.success) {
           this.notify("Twist posted! 🌀", "success");
-          await new Promise(r => setTimeout(r, 2000));
-          await this.loadFeed();
+          await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to post twist.", "error");
         }
@@ -581,8 +578,7 @@ const HomeView = {
           this.notify("Live Twist published! ⚡", "success");
           // Clear the live composer draft now that it's on-chain
           try { localStorage.removeItem("st_draft_live_composer"); } catch {}
-          await new Promise(r => setTimeout(r, 2000));
-          await this.loadFeed();
+          await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to publish Live Twist.", "error");
         }

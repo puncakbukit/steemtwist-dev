@@ -610,12 +610,18 @@ window.getMonthlyRootOffset = function(monthsBack) {
 // max_accepted_payout = "0.000 SBD" prevents any monetary reward.
 // allow_votes = true so likes still work as appreciation signals.
 //
+// Build a canonical URL to a specific twist page inside this dApp.
+function buildTwistUrl(author, permlink) {
+  return `${TWIST_CONFIG.DAPP_URL}/#/@${author}/${permlink}`;
+}
+
 // A back-link to the dApp is appended to every body so other Steem interfaces
 // (Steemit, Busy, etc.) show the origin. SteemTwist strips it before rendering.
 function buildZeroPayoutOps(username, body, parentAuthor, parentPermlink, permlink, jsonMetadata) {
+  const twistUrl = buildTwistUrl(username, permlink);
   const bodyWithLink =
     body.trimEnd() +
-    `\n\n<sub>Posted via [SteemTwist](${TWIST_CONFIG.DAPP_URL})</sub>`;
+    `\n\n<sub>Posted via [SteemTwist](${twistUrl})</sub>`;
 
   const comment = [
     "comment",
@@ -666,7 +672,9 @@ function postTwist(username, message, callback) {
     }
   );
 
-  steem_keychain.requestBroadcast(username, ops, "Posting", callback);
+  steem_keychain.requestBroadcast(username, ops, "Posting", (res) => {
+    callback({ ...res, author: username, permlink });
+  });
 }
 
 // Post a Live Twist — a twist whose json_metadata contains executable JS.
@@ -675,10 +683,13 @@ function postTwist(username, message, callback) {
 function postLiveTwist(username, title, body, code, callback) {
   const root     = getMonthlyRoot();
   const permlink = generateTwistPermlink(username);
+  const label    = (title || "Live Twist").trim();
+  const bodyText = body || "⚡ Live Twist — view on SteemTwist";
+  const externalBody = `**${label}**\n\n${bodyText}`;
 
   const ops = buildZeroPayoutOps(
     username,
-    body || "⚡ Live Twist — view on SteemTwist",
+    externalBody,
     TWIST_CONFIG.ROOT_ACCOUNT,
     root,
     permlink,
@@ -686,12 +697,14 @@ function postLiveTwist(username, title, body, code, callback) {
       app:     "steemtwist/0.1",
       type:    "live_twist",
       version: 1,
-      title:   title || "Live Twist",
+      title:   label,
       code
     }
   );
 
-  steem_keychain.requestBroadcast(username, ops, "Posting", callback);
+  steem_keychain.requestBroadcast(username, ops, "Posting", (res) => {
+    callback({ ...res, author: username, permlink });
+  });
 }
 
 // Post a reply to an existing twist via Steem Keychain.
@@ -711,17 +724,22 @@ function postTwistReply(username, message, parentAuthor, parentPermlink, callbac
     }
   );
 
-  steem_keychain.requestBroadcast(username, ops, "Posting", callback);
+  steem_keychain.requestBroadcast(username, ops, "Posting", (res) => {
+    callback({ ...res, author: username, permlink: replyPermlink });
+  });
 }
 
 // Post a Live Twist reply to an existing twist/reply.
 // Stores executable JS in json_metadata, same as top-level Live Twists.
 function postLiveTwistReply(username, title, body, code, parentAuthor, parentPermlink, callback) {
   const replyPermlink = generateTwistPermlink(username);
+  const label         = (title || "Live Twist").trim();
+  const bodyText      = body || "⚡ Live Twist — view on SteemTwist";
+  const externalBody  = `**${label}**\n\n${bodyText}`;
 
   const ops = buildZeroPayoutOps(
     username,
-    body || "⚡ Live Twist — view on SteemTwist",
+    externalBody,
     parentAuthor,
     parentPermlink,
     replyPermlink,
@@ -729,12 +747,14 @@ function postLiveTwistReply(username, title, body, code, parentAuthor, parentPer
       app:     "steemtwist/0.1",
       type:    "live_twist",
       version: 1,
-      title:   title || "Live Twist",
+      title:   label,
       code
     }
   );
 
-  steem_keychain.requestBroadcast(username, ops, "Posting", callback);
+  steem_keychain.requestBroadcast(username, ops, "Posting", (res) => {
+    callback({ ...res, author: username, permlink: replyPermlink });
+  });
 }
 
 // Vote on a twist via Steem Keychain.
