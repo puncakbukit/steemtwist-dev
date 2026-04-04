@@ -3,7 +3,7 @@
 // Vue 3 + Vue Router 4 application entry point.
 // ============================================================
 
-const { createApp, ref, computed, onMounted, provide, inject, watch } = Vue;
+const { createApp, ref, onMounted, provide } = Vue;
 const { createRouter, createWebHashHistory, useRoute }                = VueRouter;
 
 function postKey(post) {

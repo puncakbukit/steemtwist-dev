@@ -118,51 +118,6 @@ function fetchReplies(author, permlink) {
   return callWithFallbackAsync(steem.api.getContentReplies, [author, permlink]);
 }
 
-// Recursively fetch ALL nested replies for a post.
-function fetchAllReplies(author, permlink) {
-  function recurse(author, permlink) {
-    return callWithFallbackAsync(
-      steem.api.getContentReplies,
-      [author, permlink]
-    ).then(replies => {
-      if (!replies || replies.length === 0) return [];
-
-      return Promise.all(
-        replies.map(r =>
-          recurse(r.author, r.permlink).then(children => [
-            { author: r.author, permlink: r.permlink },
-            ...children
-          ])
-        )
-      ).then(results => results.flat());
-    }).catch(() => []);
-  }
-
-  return recurse(author, permlink).then(collected => {
-    if (collected.length === 0) return [];
-
-    return Promise.all(
-      collected.map(r =>
-        callWithFallbackAsync(steem.api.getContent, [r.author, r.permlink])
-          .catch(() => null)
-      )
-    ).then(enriched =>
-      enriched.filter(Boolean)
-    );
-  });
-}
-
-// Fetch recent posts by tag (uses getDiscussionsByCreated).
-function fetchPostsByTag(tag, limit = 20) {
-  return callWithFallbackAsync(
-    steem.api.getDiscussionsByCreated,
-    [{
-      tag,
-      limit
-    }]
-  );
-}
-
 // Fetch the most recent posts across all of Steem (no tag filter).
 // Used by ExploreView and HomeView Understream mode.
 //
@@ -364,33 +319,6 @@ function fetchTwistsByUser(
 // jsonMetadata may be a plain object or a JSON string.
 // tags (string[]) are merged into jsonMetadata before submission.
 //
-// callback signature: (response) => { response.success, response.message }
-function keychainPost(
-  username,
-  title,
-  body,
-  parentPermlink,
-  parentAuthor,
-  jsonMetadata,
-  permlink,
-  tags,
-  callback
-) {
-  const meta = typeof jsonMetadata === "string" ?
-    JSON.parse(jsonMetadata) : {
-      ...jsonMetadata
-    };
-  if (tags && tags.length) meta.tags = tags;
-
-  steem_keychain.requestPost(
-    username, title, body,
-    parentPermlink, parentAuthor,
-    JSON.stringify(meta),
-    permlink, "",
-    callback
-  );
-}
-
 // Request a Keychain signature to verify account ownership (login).
 // callback signature: (response) => { response.success, response.data.username }
 function keychainLogin(username, callback) {
@@ -530,20 +458,6 @@ async function uploadImageToSteemit(username, file, callback) {
 }
 
 // ---- Utility ----
-
-// Build a unique permlink from a title string + timestamp suffix.
-// Steem permlinks: lowercase, hyphens only, max 255 chars.
-function buildPermlink(title) {
-  const slug = title
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 241);
-  return `${slug}-${Date.now()}`;
-}
 
 // Steem timestamps omit the UTC 'Z' suffix; append it to ensure correct
 // Date parsing across all browsers.
