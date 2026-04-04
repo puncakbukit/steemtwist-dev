@@ -1247,6 +1247,27 @@ function stripBackLink(text) {
   return text.replace(/\n+<sub>Posted via \[SteemTwist\][^\n]*/i, "").trimEnd();
 }
 
+// Live Twist posts are broadcast with a body that starts with the label
+// for Steemit-style UIs: "**Label**\n\nDescription". In SteemTwist we already
+// render the label in the card header, so remove that duplicated first line.
+function stripLiveTwistLabelPrefix(text, label) {
+  let cleaned = stripBackLink(text || "").trim();
+  const title = (label || "").trim();
+  if (!cleaned || !title) return cleaned;
+
+  const esc = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  cleaned = cleaned
+    .replace(new RegExp(`^\\*\\*${esc}\\*\\*\\s*\\n+`, "i"), "")
+    .replace(new RegExp(`^#\\s*${esc}\\s*\\n+`, "i"), "");
+
+  if (
+    cleaned === `**${title}**` ||
+    cleaned.toLowerCase() === `# ${title}`.toLowerCase()
+  ) return "";
+
+  return cleaned.trim();
+}
+
 // ---- ReplyCardComponent ----
 // Renders a single reply with its own compose box and a recursive
 // ThreadComponent for its children. Declared before ThreadComponent
@@ -2783,10 +2804,15 @@ const LiveTwistComponent = {
     // Body is the human-readable description written by the author.
     // Strip the SteemTwist back-link appended by buildZeroPayoutOps before display.
     bodyText() {
-      const raw = (this.post.body || "").replace(/\n+<sub>Posted via \[SteemTwist\][^\n]*/i, "").trimEnd();
+      const raw = stripLiveTwistLabelPrefix(this.post.body || "", this.title);
       // Also skip the generic placeholder that means "no real description was provided"
       const placeholder = "\u26a1 Live Twist \u2014 view on SteemTwist";
       return (raw === placeholder || raw === "\u26a1 Live Twist - view on SteemTwist") ? "" : raw;
+    },
+    bodyHtml() {
+      return this.bodyText
+        ? DOMPurify.sanitize(renderMarkdown(this.bodyText))
+        : "";
     },
     codeSize(){ return new TextEncoder().encode(this.code).length; },
     tooBig()  { return this.codeSize > 10240; },   // 10 KB limit
@@ -3066,7 +3092,7 @@ ${'<'}/script>
       <div v-if="bodyText" style="
         padding:8px 10px;font-size:13px;color:#c0b0e0;line-height:1.6;
         border-bottom:1px solid #1a0a30;background:#120820;word-break:break-word;
-      ">{{ bodyText }}</div>
+      " v-html="bodyHtml"></div>
 
       <!-- Sandbox iframe (only mounted when running) -->
       <div v-if="running" style="padding:0;">

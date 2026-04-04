@@ -2330,6 +2330,7 @@ vueApp.component("UserProfileComponent",     UserProfileComponent);
 vueApp.component("LoadingSpinnerComponent",  LoadingSpinnerComponent);
 vueApp.component("ReplyCardComponent",       ReplyCardComponent);
 vueApp.component("ThreadComponent",          ThreadComponent);
+vueApp.component("LiveTwistComponent",       LiveTwistComponent);
 vueApp.component("TwistCardComponent",       TwistCardComponent);
 vueApp.component("TwistComposerComponent",   TwistComposerComponent);
 
