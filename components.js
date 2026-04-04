@@ -1940,7 +1940,7 @@ const ThreadComponent = {
   data() {
     return {
       replies:   [],
-      loading:   true,
+      loading:   false,
       loadError: ""
     };
   },
