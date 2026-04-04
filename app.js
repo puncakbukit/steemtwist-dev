@@ -61,6 +61,10 @@ const ExploreView = {
         ? this.sortedTwists.filter(p => p.permlink !== this.pinnedTwist.permlink).length
         : this.sortedTwists.length;
       return this.pagedTwists.length < total;
+    },
+    canLoadOlder() {
+      if (this.understreamOn) return this.understreamCursor !== null;
+      return true;
     }
   },
 
@@ -397,7 +401,7 @@ const ExploreView = {
         ></twist-card-component>
 
         <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0"
+        <div v-if="sortedTwists.length > 0 || canLoadOlder"
              style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
           <button
             v-if="hasMore"
@@ -406,6 +410,7 @@ const ExploreView = {
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
           >Load more</button>
           <button
+            v-if="canLoadOlder"
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
@@ -450,7 +455,8 @@ const HomeView = {
   computed: {
     sortedTwists() { return sortTwists(this.twists, this.sortMode); },
     pagedTwists()  { return this.sortedTwists.slice(0, this.page * this.pageSize); },
-    hasMore()      { return this.pagedTwists.length < this.sortedTwists.length; }
+    hasMore()      { return this.pagedTwists.length < this.sortedTwists.length; },
+    canLoadOlder() { return !this.understreamOn; }
   },
 
   async created() {
@@ -758,7 +764,7 @@ const HomeView = {
         ></twist-card-component>
 
         <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0"
+        <div v-if="sortedTwists.length > 0 || canLoadOlder"
              style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
           <button
             v-if="hasMore"
@@ -767,6 +773,7 @@ const HomeView = {
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
           >Load more</button>
           <button
+            v-if="canLoadOlder"
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
@@ -818,6 +825,9 @@ const ProfileView = {
         ? this.userTwists.filter(p => p.permlink !== this.pinnedTwist.permlink).length
         : this.userTwists.length;
       return this.pagedTwists.length < total;
+    },
+    canLoadOlder() {
+      return this.nextCursor !== null;
     }
   },
 
@@ -975,7 +985,7 @@ const ProfileView = {
           ></twist-card-component>
 
           <!-- Pagination controls -->
-          <div v-if="userTwists.length > 0"
+          <div v-if="userTwists.length > 0 || canLoadOlder"
                style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
             <button
               v-if="hasMore"
@@ -984,7 +994,7 @@ const ProfileView = {
                      border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
             >Load more</button>
             <button
-              v-if="nextCursor !== null"
+              v-if="canLoadOlder"
               @click="loadOlderTwists"
               :disabled="loadingOlder"
               style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
