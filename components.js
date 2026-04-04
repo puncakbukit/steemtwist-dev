@@ -3485,6 +3485,8 @@ const TwistCardComponent = {
               this.liveReplyTitle  = "";
               this.liveReplyBody   = "";
               this.liveReplyCode   = "";
+              this.showReplyBox    = false;
+              this.threadExpanded  = true;
               this.showReplies     = true;
               this.replyCount++;
               draftStorage.clear("live_reply_title_" + this.post.permlink);
@@ -3515,6 +3517,8 @@ const TwistCardComponent = {
         if (res.success) {
           this.replyText        = "";
           this.replyPreviewMode = false;
+          this.showReplyBox     = false;
+          this.threadExpanded   = true;
           this.showReplies      = true;
           this.replyCount++;
           draftStorage.clear("reply_" + this.post.permlink);
