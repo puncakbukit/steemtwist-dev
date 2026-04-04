@@ -1394,7 +1394,12 @@ const ReplyCardComponent = {
     liveReplyCode(v)  { draftStorage.save("live_reply_code_" + this.reply.permlink, v); }
   },
     methods: {
-    ...LIVE_TWIST_HANDLER_MIXIN,
+    handleLivePreviewQuery(queryType, params, iframeSource, reqId) {
+      return LIVE_TWIST_HANDLER_MIXIN.handleQueryRequest.call(this, queryType, params, iframeSource, reqId);
+    },
+    handleLivePreviewAction(actionType, params, iframeSource) {
+      return LIVE_TWIST_HANDLER_MIXIN.handleActionRequest.call(this, actionType, params, iframeSource);
+    },
     vote() {
       if (!this.canAct || this.isVoting || this.hasVoted) return;
       this.isVoting = true;
@@ -1489,10 +1494,10 @@ const ReplyCardComponent = {
         this.liveReplyIframeHeight = Math.max(e.data.height || 80, 80);
       }
       if (e?.data?.type === "LIVE_TWIST_QUERY") {
-        this.handleQueryRequest(e.data.queryType, e.data.params, e.source, e.data._reqId);
+        this.handleLivePreviewQuery(e.data.queryType, e.data.params, e.source, e.data._reqId);
       }
       if (e?.data?.type === "LIVE_TWIST_ACTION") {
-        this.handleActionRequest(e.data.actionType, e.data.params, e.source);
+        this.handleLivePreviewAction(e.data.actionType, e.data.params, e.source);
       }
     },
     submitReply() {
