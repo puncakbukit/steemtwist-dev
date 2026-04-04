@@ -1808,11 +1808,6 @@ const SecretTwistView = {
       });
     },
 
-    sentAnchorId(key) {
-      if (!key) return "";
-      return "secret-sent-" + encodeURIComponent(String(key));
-    },
-
     jumpToParentInSent(parent) {
       if (!parent || !parent.key) return;
       const idx = this.sent.findIndex(p => postKey(p) === parent.key);
@@ -1823,14 +1818,6 @@ const SecretTwistView = {
       this.tab = "sent";
       this.page = Math.max(1, Math.ceil((idx + 1) / this.pageSize));
       this.highlightedParentKey = parent.key;
-      this.$nextTick(() => {
-        requestAnimationFrame(() => {
-          const el = document.getElementById(this.sentAnchorId(parent.key));
-          if (el && typeof el.scrollIntoView === "function") {
-            el.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
-        });
-      });
       setTimeout(() => {
         if (this.highlightedParentKey === parent.key) this.highlightedParentKey = "";
       }, 5000);
@@ -1923,20 +1910,16 @@ const SecretTwistView = {
             {{ tab === 'inbox' ? 'No Secret Twists received yet.' : 'No Secret Twists sent yet.' }}
           </div>
 
-          <div
+          <secret-twist-card-component
             v-for="post in pagedList"
             :key="post.permlink"
-            :id="tab === 'sent' ? sentAnchorId(postKey(post)) : null"
-          >
-            <secret-twist-card-component
-              :post="post"
-              :username="username"
-              :has-keychain="hasKeychain"
-              :show-parent-link="tab === 'inbox'"
-              :highlight-key="highlightedParentKey"
-              @jump-to-parent="jumpToParentInSent"
-            ></secret-twist-card-component>
-          </div>
+            :post="post"
+            :username="username"
+            :has-keychain="hasKeychain"
+            :show-parent-link="tab === 'inbox'"
+            :highlight-key="highlightedParentKey"
+            @jump-to-parent="jumpToParentInSent"
+          ></secret-twist-card-component>
 
           <!-- Load More (client-side page) -->
           <div v-if="hasMore" style="text-align:center;margin:16px 0;">
