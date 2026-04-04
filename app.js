@@ -396,22 +396,21 @@ const ExploreView = {
           @deleted="p => twists = twists.filter(t => t.permlink !== p.permlink)"
         ></twist-card-component>
 
-        <!-- Load More (client-side page through already-fetched month) -->
-        <div v-if="hasMore" style="text-align:center;margin:16px 0;">
+        <!-- Pagination controls -->
+        <div v-if="sortedTwists.length > 0"
+             style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
           <button
+            v-if="hasMore"
             @click="page++"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
           >Load more</button>
-        </div>
-        <!-- Load older month from blockchain when current page is exhausted -->
-        <div v-else-if="sortedTwists.length > 0" style="text-align:center;margin:16px 0;">
           <button
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-          >{{ loadingOlderMonth ? "Loading…" : (understreamOn ? "Load more posts" : "Load older month") }}</button>
+          >{{ loadingOlderMonth ? "Loading…" : (understreamOn ? "Load more posts" : "Load older months") }}</button>
         </div>
       </template>
 
@@ -758,22 +757,21 @@ const HomeView = {
           @deleted="p => twists = twists.filter(t => t.permlink !== p.permlink)"
         ></twist-card-component>
 
-        <!-- Load More (client-side page through already-fetched months) -->
-        <div v-if="hasMore" style="text-align:center;margin:16px 0;">
+        <!-- Pagination controls -->
+        <div v-if="sortedTwists.length > 0"
+             style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
           <button
+            v-if="hasMore"
             @click="page++"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
           >Load more</button>
-        </div>
-        <!-- Load older month from blockchain when current pages are exhausted -->
-        <div v-else-if="sortedTwists.length > 0" style="text-align:center;margin:16px 0;">
           <button
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
             style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                    border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-          >{{ loadingOlderMonth ? "Loading…" : "Load older month" }}</button>
+          >{{ loadingOlderMonth ? "Loading…" : "Load older months" }}</button>
         </div>
       </template>
 
@@ -976,23 +974,22 @@ const ProfileView = {
             @deleted="p => userTwists = userTwists.filter(t => t.permlink !== p.permlink)"
           ></twist-card-component>
 
-          <!-- Load More (client-side page) -->
-          <div v-if="hasMore" style="text-align:center;margin:16px 0;">
+          <!-- Pagination controls -->
+          <div v-if="userTwists.length > 0"
+               style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
             <button
+              v-if="hasMore"
               @click="page++"
               style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                      border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
             >Load more</button>
-          </div>
-          <!-- Load older posts from blockchain when current pages are exhausted -->
-          <div v-else-if="userTwists.length > 0 && nextCursor !== null"
-               style="text-align:center;margin:16px 0;">
             <button
+              v-if="nextCursor !== null"
               @click="loadOlderTwists"
               :disabled="loadingOlder"
               style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
                      border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-            >{{ loadingOlder ? "Loading…" : (understreamOn ? "Load more posts" : "Load older twists") }}</button>
+            >{{ loadingOlder ? "Loading…" : (understreamOn ? "Load more posts" : "Load older months") }}</button>
           </div>
           <div v-else-if="userTwists.length > 0 && nextCursor === null"
                style="text-align:center;color:#5a4e70;font-size:12px;padding:12px 0;">
