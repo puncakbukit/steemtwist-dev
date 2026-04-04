@@ -1278,7 +1278,7 @@ const ReplyCardComponent = {
   liveGreetings: LIVE_TWIST_GREETINGS,
   liveQueries: LIVE_TWIST_QUERIES,
   liveActions: LIVE_TWIST_ACTIONS,
-  inject: ["username", "hasKeychain"],
+  inject: ["username", "hasKeychain", "notify"],
   props: {
     reply: { type: Object, required: true },
     depth: { type: Number, default: 0 }
@@ -1394,6 +1394,7 @@ const ReplyCardComponent = {
     liveReplyCode(v)  { draftStorage.save("live_reply_code_" + this.reply.permlink, v); }
   },
     methods: {
+    ...LIVE_TWIST_HANDLER_MIXIN,
     vote() {
       if (!this.canAct || this.isVoting || this.hasVoted) return;
       this.isVoting = true;
@@ -1486,6 +1487,12 @@ const ReplyCardComponent = {
       if (!iframe || e.source !== iframe.contentWindow) return;
       if (e?.data?.type === "LIVE_REPLY_PREVIEW_RESIZE") {
         this.liveReplyIframeHeight = Math.max(e.data.height || 80, 80);
+      }
+      if (e?.data?.type === "LIVE_TWIST_QUERY") {
+        this.handleQueryRequest(e.data.queryType, e.data.params, e.source, e.data._reqId);
+      }
+      if (e?.data?.type === "LIVE_TWIST_ACTION") {
+        this.handleActionRequest(e.data.actionType, e.data.params, e.source);
       }
     },
     submitReply() {
@@ -3181,6 +3188,7 @@ const TwistCardComponent = {
   liveGreetings: LIVE_TWIST_GREETINGS,
   liveQueries: LIVE_TWIST_QUERIES,
   liveActions: LIVE_TWIST_ACTIONS,
+  inject: ["notify"],
   components: { ThreadComponent, LiveTwistComponent },
   props: {
     post:        { type: Object,  required: true },
@@ -3348,6 +3356,7 @@ const TwistCardComponent = {
     editBody(v)  { if (this.isLiveEditBox) draftStorage.save("live_edit_" + this.post.permlink, { editCode: this.editCode, editTitle: this.editTitle, editBody: v }); }
   },
   methods: {
+    ...LIVE_TWIST_HANDLER_MIXIN,
     vote() {
       if (!this.canAct || this.isVoting || this.hasVoted) return;
       this.isVoting = true;
@@ -3447,6 +3456,12 @@ const TwistCardComponent = {
       if (!iframe || e.source !== iframe.contentWindow) return;
       if (e?.data?.type === "LIVE_REPLY_PREVIEW_RESIZE") {
         this.liveReplyIframeHeight = Math.max(e.data.height || 80, 80);
+      }
+      if (e?.data?.type === "LIVE_TWIST_QUERY") {
+        this.handleQueryRequest(e.data.queryType, e.data.params, e.source, e.data._reqId);
+      }
+      if (e?.data?.type === "LIVE_TWIST_ACTION") {
+        this.handleActionRequest(e.data.actionType, e.data.params, e.source);
       }
     },
     pinPost() {
@@ -4430,7 +4445,7 @@ function buildLiveTwistSandboxDoc(userCode) {
     "input,textarea{background:#1a1030;color:#e8e0f0;border:1px solid #3b1f5e;border-radius:6px;padding:5px 8px;font-size:13px;width:100%}" +
     "#_root{min-height:32px}" +
     "</style></head><body><div id='_root'></div>" +
-    "<script>(function(){window.fetch=()=>Promise.reject(new Error('Network blocked'));window.XMLHttpRequest=function(){throw new Error('Network blocked');};window.WebSocket=function(){throw new Error('Network blocked');};window.open=()=>null;var purify=DOMPurify;var _purifyConfig=" + escapedPurifyConfig + ";function sanitize(h){if(typeof h!=='string')return '';if(purify)return purify.sanitize(h,_purifyConfig);return h.replace(/<script[\\s\\S]*?<\\/script>/gi,'');}var _root=document.getElementById('_root');var app={render:function(h){_root.innerHTML=sanitize(String(h));setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},text:function(s){_root.textContent=String(s).slice(0,2000);setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},resize:function(h){var px=Math.min(Math.max(parseInt(h)||200,40),600);parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:px},'*');},log:function(){}};var userCode=" + escaped + ";try{var fn=new Function('app',userCode);var r=fn(app);if(r&&typeof r.catch==='function')r.catch(function(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';});}catch(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';}setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},150);})();<\/script></body></html>";
+    "<script>(function(){window.fetch=()=>Promise.reject(new Error('Network blocked'));window.XMLHttpRequest=function(){throw new Error('Network blocked');};window.WebSocket=function(){throw new Error('Network blocked');};window.open=()=>null;var purify=DOMPurify;var _purifyConfig=" + escapedPurifyConfig + ";function sanitize(h){if(typeof h!=='string')return '';if(purify)return purify.sanitize(h,_purifyConfig);return h.replace(/<script[\\s\\S]*?<\\/script>/gi,'');}var _root=document.getElementById('_root');var app={render:function(h){_root.innerHTML=sanitize(String(h));setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},text:function(s){_root.textContent=String(s).slice(0,2000);setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},0);},resize:function(h){var px=Math.min(Math.max(parseInt(h)||200,40),600);parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:px},'*');},log:function(){},query:function(type,params){params=params||{};parent.postMessage({type:'LIVE_TWIST_QUERY',queryType:type,params:params},'*');},action:function(type,params){params=params||{};parent.postMessage({type:'LIVE_TWIST_ACTION',actionType:type,params:params},'*');},onResult:function(callback){if(app._onResultHandler)window.removeEventListener('message',app._onResultHandler);app._onResultHandler=function(e){if(e.data.type==='QUERY_RESULT'){callback(e.data.success,e.data.result);}else if(e.data.type==='ACTION_RESULT'){callback(e.data.success,e.data.action);}};window.addEventListener('message',app._onResultHandler);},ask:function(type,params){params=params||{};var reqId=Math.random().toString(36).slice(2);return new Promise(function(resolve,reject){var h=function(e){var d=e.data;if(d.type==='QUERY_RESULT'&&d._reqId===reqId){window.removeEventListener('message',h);if(d.success)resolve(d.result);else reject(new Error('Query failed: '+type));}};window.addEventListener('message',h);parent.postMessage({type:'LIVE_TWIST_QUERY',queryType:type,params:params,_reqId:reqId},'*');});}};var userCode=" + escaped + ";try{var fn=new Function('app',userCode);var r=fn(app);if(r&&typeof r.catch==='function')r.catch(function(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';});}catch(e){_root.innerHTML='<em style=\"color:#fca5a5\">Error: '+String(e)+'</em>';}setTimeout(function(){parent.postMessage({type:'LIVE_REPLY_PREVIEW_RESIZE',height:document.body.scrollHeight+16},'*');},150);})();<\/script></body></html>";
 }
 
 const TwistComposerComponent = {
