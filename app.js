@@ -483,8 +483,9 @@ const HomeView = {
       try {
         const root = getMonthlyRootOffset(this.monthsLoaded);
         const older = await fetchTwistFeedPage(root);
+        const olderFromFollowing = older.filter(p => this.followingSet.has(p.author));
         const existingKeys = new Set(this.twists.map(t => postKey(t)));
-        const fresh = older.filter(t => !existingKeys.has(postKey(t)));
+        const fresh = olderFromFollowing.filter(t => !existingKeys.has(postKey(t)));
         if (fresh.length === 0) {
           this.notify("No twists found in that month.", "info");
         } else {
@@ -854,7 +855,7 @@ const ProfileView = {
         // Understream:  full blog (all Steem posts by this user)
         const twistsPromise = this.understreamOn
           ? fetchPostsByUser(user, 50)   // now returns { posts, nextCursor }
-          : fetchTwistsByUser(user, this.monthlyRoot, { limit: 50 });
+          : fetchTwistsByUser(user, null, { limit: 50 });
 
         const [profile, result, pinned] = await Promise.all([
           fetchAccount(user),
@@ -881,7 +882,7 @@ const ProfileView = {
         const user = this.$route.params.user;
         const result = this.understreamOn
           ? await fetchPostsByUser(user, 50, this.nextCursor)
-          : await fetchTwistsByUser(user, this.monthlyRoot, { startFrom: this.nextCursor, limit: 50 });
+          : await fetchTwistsByUser(user, null, { startFrom: this.nextCursor, limit: 50 });
         const existingKeys = new Set(this.userTwists.map(t => postKey(t)));
         const fresh = result.posts.filter(t => !existingKeys.has(postKey(t)));
         if (fresh.length === 0) {
@@ -930,7 +931,7 @@ const ProfileView = {
             display:flex;align-items:center;justify-content:space-between;
           ">
             <h3 style="margin:0;color:#e8e0f0;">
-              {{ understreamOn ? '🌊 All posts' : '🌀 Twists this month' }}
+              {{ understreamOn ? '🌊 All posts' : '🌀 Twists' }}
             </h3>
             <div style="display:flex;gap:6px;">
               <button
@@ -969,7 +970,7 @@ const ProfileView = {
 
           <div v-if="userTwists.filter(p => !pinnedTwist || p.permlink !== pinnedTwist.permlink).length === 0"
                style="color:#5a4e70;padding:20px;font-size:14px;">
-            {{ understreamOn ? 'No posts found.' : 'No twists from @' + $route.params.user + ' this month.' }}
+            {{ understreamOn ? 'No posts found.' : 'No twists found for @' + $route.params.user + '.' }}
           </div>
 
           <twist-card-component
