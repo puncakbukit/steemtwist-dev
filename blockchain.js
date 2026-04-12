@@ -1969,7 +1969,10 @@ class TrendDetector {
     this._words  = new Map(); // word -> { count, recent }
     this._decay  = decay;
     this._minLen = minLen;
-    this._seenPermlinks = new Set(); // dedup: don't count the same post twice
+    // Dedup keys:
+    //   post:${author}/${permlink} for post bodies
+    //   sig:${id}                 for signals
+    this._seenPermlinks = new Set(); // don't count the same content twice
   }
 
   // ── Text helpers ─────────────────────────────────────────────────────────
@@ -2024,10 +2027,19 @@ class TrendDetector {
     data.recent += 1;
   }
 
+  _postDedupKey(author, permlink) {
+    if (!permlink) return "";
+    // Steem permlinks are unique per author, not globally.
+    // Use author/permlink to avoid collisions between different users
+    // who happen to publish with the same permlink string.
+    return "post:" + (author ? `${author}/${permlink}` : permlink);
+  }
+
   // Ingest one post body. Returns true if the post was new (not a duplicate).
-  _ingestBody(permlink, body) {
-    if (!permlink || this._seenPermlinks.has(permlink)) return false;
-    this._seenPermlinks.add(permlink);
+  _ingestBody(author, permlink, body) {
+    const key = this._postDedupKey(author, permlink);
+    if (!key || this._seenPermlinks.has(key)) return false;
+    this._seenPermlinks.add(key);
     for (const word of this._tokenize(body)) this._addWord(word);
     return true;
   }
@@ -2039,7 +2051,7 @@ class TrendDetector {
     if (!posts || posts.length === 0) return;
     this.decay();
     for (const post of posts) {
-      this._ingestBody(post.permlink, post.body);
+      this._ingestBody(post.author, post.permlink, post.body);
     }
   }
 
@@ -2047,7 +2059,7 @@ class TrendDetector {
   // continuous timer in the view handles decay for live streams.
   ingestPost(post) {
     if (!post) return;
-    this._ingestBody(post.permlink, post.body);
+    this._ingestBody(post.author, post.permlink, post.body);
   }
 
   // Ingest an array of Signal objects (from fetchSignals / SignalsView).
