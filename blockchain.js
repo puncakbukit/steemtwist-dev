@@ -2138,7 +2138,6 @@ class TrendDetector {
   reset() {
     this._words.clear();
     this._seenPermlinks.clear();
-    this._runOrQueue(() => this._clearPersistentWords());
   }
 
   // ── IndexedDB persistence ────────────────────────────────────────────────
@@ -2250,9 +2249,4 @@ class TrendDetector {
     }
   }
 
-  async _clearPersistentWords() {
-    const store = this._store("readwrite");
-    if (!store) return;
-    await this._requestToPromise(store.clear());
-  }
 }
