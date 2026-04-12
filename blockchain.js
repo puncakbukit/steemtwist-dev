@@ -49,11 +49,27 @@ function callWithFallbackAsync(apiCall, args) {
 
 // Fetch a single Steem account and extract its profile metadata.
 // Returns null if the account does not exist or the request fails.
+const ACCOUNT_CACHE_TTL = 90 * 1000; // 90 seconds
+const accountCache = new Map(); // username -> { ts, value }
+
 function fetchAccount(username) {
   return new Promise(resolve => {
     if (!username) return resolve(null);
+    const key = String(username).toLowerCase();
+    const cached = accountCache.get(key);
+    if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
+      const v = cached.value;
+      // Return a copy so callers don't accidentally mutate cache.
+      return resolve(v && typeof v === "object" ? { ...v } : v);
+    }
+
+    function setCached(value) {
+      accountCache.set(key, { ts: Date.now(), value });
+      return value;
+    }
+
     steem.api.getAccounts([username], (err, result) => {
-      if (err || !result || !result.length) return resolve(null);
+      if (err || !result || !result.length) return resolve(setCached(null));
       const account = result[0];
       let profile = {};
       try {
@@ -87,7 +103,7 @@ function fetchAccount(username) {
 
       // Fetch follower/following counts in parallel with account data
       steem.api.getFollowCount(account.name, (fcErr, fc) => {
-        resolve({
+        const normalized = {
           username:       account.name,
           profileImage:   sanitizeImageUrl(profile.profile_image),
           displayName:    profile.name || account.name,
@@ -100,7 +116,9 @@ function fetchAccount(username) {
           followerCount:  (fc && !fcErr) ? (fc.follower_count  || 0) : null,
           followingCount: (fc && !fcErr) ? (fc.following_count || 0) : null,
           created:        account.created || ""
-        });
+        };
+        setCached(normalized);
+        resolve({ ...normalized });
       });
     });
   });

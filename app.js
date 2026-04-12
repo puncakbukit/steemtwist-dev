@@ -10,6 +10,93 @@ function postKey(post) {
   return `${post.author}/${post.permlink}`;
 }
 
+const SIGNALS_READ_MAX = 2000;
+const SIGNALS_READ_TTL = 180 * 24 * 60 * 60 * 1000; // 180 days
+
+function normalizeStoredBool(raw, fallback = false) {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return fallback;
+}
+
+function signalsReadStorageKey(username) {
+  return "steemtwist_signals_read_" + username;
+}
+
+function loadReadSignalEntries(username) {
+  if (!username) return [];
+  try {
+    const raw = localStorage.getItem(signalsReadStorageKey(username));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    let entries = [];
+
+    // New format: { v: 1, items: [{ id, ts }] }
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.items)) {
+      entries = parsed.items
+        .filter(e =>
+          e &&
+          (typeof e.id === "string" || typeof e.id === "number") &&
+          typeof e.ts === "number"
+        )
+        .map(e => ({ id: String(e.id), ts: e.ts }));
+    }
+    // Legacy format: ["123", "124", ...]
+    else if (Array.isArray(parsed)) {
+      entries = parsed
+        .map(id => String(id))
+        .filter(Boolean)
+        .map(id => ({ id, ts: now }));
+    }
+
+    // TTL + de-dup + cap (keep latest)
+    const dedup = new Map();
+    for (const e of entries) {
+      if (now - e.ts > SIGNALS_READ_TTL) continue;
+      dedup.set(e.id, e.ts);
+    }
+    const normalized = [...dedup.entries()]
+      .map(([id, ts]) => ({ id, ts }))
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, SIGNALS_READ_MAX);
+
+    // Persist normalized shape so legacy arrays and expired entries are pruned.
+    persistReadSignalEntries(username, normalized);
+    return normalized;
+  } catch {
+    return [];
+  }
+}
+
+function persistReadSignalEntries(username, entries) {
+  if (!username) return;
+  try {
+    const normalized = (entries || [])
+      .filter(e => e && typeof e.id === "string" && typeof e.ts === "number")
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, SIGNALS_READ_MAX);
+    localStorage.setItem(
+      signalsReadStorageKey(username),
+      JSON.stringify({ v: 1, items: normalized })
+    );
+  } catch {}
+}
+
+function readSignalIdSet(username) {
+  return new Set(loadReadSignalEntries(username).map(e => e.id));
+}
+
+function markSignalIdsRead(username, ids) {
+  if (!username) return;
+  const now = Date.now();
+  const existing = loadReadSignalEntries(username);
+  const byId = new Map(existing.map(e => [e.id, e.ts]));
+  for (const id of ids || []) byId.set(String(id), now);
+  const merged = [...byId.entries()].map(([id, ts]) => ({ id, ts }));
+  persistReadSignalEntries(username, merged);
+}
+
 // ============================================================
 // ROUTE VIEWS
 // ============================================================
@@ -190,7 +277,7 @@ const ExploreView = {
         if (res.success) {
           this.notify("Live Twist published! ⚡", "success");
           // Clear the live composer draft now that it's on-chain
-          try { localStorage.removeItem("st_draft_live_composer"); } catch {}
+          if (typeof draftStorage !== "undefined") draftStorage.clear("live_composer", this.username);
           await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to publish Live Twist.", "error");
@@ -577,7 +664,7 @@ const HomeView = {
         if (res.success) {
           this.notify("Live Twist published! ⚡", "success");
           // Clear the live composer draft now that it's on-chain
-          try { localStorage.removeItem("st_draft_live_composer"); } catch {}
+          if (typeof draftStorage !== "undefined") draftStorage.clear("live_composer", this.username);
           await this.$router.push(`/@${res.author}/${res.permlink}`);
         } else {
           this.notify(res.error || res.message || "Failed to publish Live Twist.", "error");
@@ -1199,11 +1286,7 @@ const SignalsView = {
 
   computed: {
     readIds() {
-      try {
-        return new Set(JSON.parse(
-          localStorage.getItem("steemtwist_signals_read_" + this.username) || "[]"
-        ));
-      } catch { return new Set(); }
+      return readSignalIdSet(this.username);
     },
     // In Twist Stream mode, only show signals for tw- permlinks
     // (or signals with no permlink, like follows).
@@ -1272,12 +1355,7 @@ const SignalsView = {
 
     markAllRead() {
       const ids = this.signals.map(s => s.id);
-      try {
-        localStorage.setItem(
-          "steemtwist_signals_read_" + this.username,
-          JSON.stringify(ids)
-        );
-      } catch {}
+      markSignalIdsRead(this.username, ids);
       if (typeof this.refreshUnreadSignals === "function") {
         this.refreshUnreadSignals(this.username);
       }
@@ -2023,6 +2101,9 @@ const App = {
 
     onMounted(() => {
       setRPC(0);
+      if (typeof draftStorage !== "undefined" && typeof draftStorage.gc === "function") {
+        draftStorage.gc();
+      }
       // Always load a profile — logged-in user's own, or @steemtwist as fallback
       loadProfile(username.value);
       if (username.value) refreshUnreadSignals(username.value);
@@ -2086,10 +2167,12 @@ const App = {
 
     // Global Understream toggle — persisted in localStorage.
     // OFF = Twist Stream only (SteemTwist data); ON = full Steem Understream.
-    const understreamOn = ref(localStorage.getItem("steemtwist_understream") === "true");
+    const understreamOn = ref(
+      normalizeStoredBool(localStorage.getItem("steemtwist_understream"), false)
+    );
     function toggleUnderstream() {
       understreamOn.value = !understreamOn.value;
-      localStorage.setItem("steemtwist_understream", understreamOn.value);
+      localStorage.setItem("steemtwist_understream", String(understreamOn.value));
     }
 
     // Unread signal count — recomputed whenever the user navigates to /signals
@@ -2100,9 +2183,7 @@ const App = {
       if (!user) { unreadSignals.value = 0; return; }
       try {
         const signals = await fetchSignals(user);
-        let readIds;
-        try { readIds = new Set(JSON.parse(localStorage.getItem("steemtwist_signals_read_" + user) || "[]")); }
-        catch { readIds = new Set(); }
+        const readIds = readSignalIdSet(user);
         unreadSignals.value = signals.filter(s => !readIds.has(s.id)).length;
       } catch { unreadSignals.value = 0; }
     }

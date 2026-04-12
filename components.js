@@ -8,18 +8,92 @@
 // Thin wrappers around localStorage for persisting in-progress composer drafts.
 // Keys are namespaced with "st_draft_" to avoid collisions.
 // All operations are try/caught so storage quota errors never break the UI.
+const DRAFT_STORAGE_PREFIX = "st_draft_";
+const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function normalizeDraftUser(user) {
+  return (user || "").toString().trim().toLowerCase().replace(/[^a-z0-9\-.]/g, "");
+}
+
+function activeDraftUser() {
+  try {
+    return normalizeDraftUser(localStorage.getItem("steem_user") || "");
+  } catch { return ""; }
+}
+
+function draftStorageKey(key, username = "") {
+  const safeKey = String(key || "");
+  const user = normalizeDraftUser(username) || activeDraftUser();
+  return user ? `${DRAFT_STORAGE_PREFIX}${user}_${safeKey}` : `${DRAFT_STORAGE_PREFIX}${safeKey}`;
+}
+
 const draftStorage = {
-  save(key, value) {
-    try { localStorage.setItem("st_draft_" + key, JSON.stringify(value)); } catch {}
-  },
-  load(key, fallback = null) {
+  save(key, value, username = "") {
     try {
-      const raw = localStorage.getItem("st_draft_" + key);
-      return raw !== null ? JSON.parse(raw) : fallback;
+      localStorage.setItem(
+        draftStorageKey(key, username),
+        JSON.stringify({ v: 1, ts: Date.now(), value })
+      );
+    } catch {}
+  },
+  load(key, fallback = null, username = "") {
+    try {
+      const scopedKey = draftStorageKey(key, username);
+      const rawScoped = localStorage.getItem(scopedKey);
+      const now = Date.now();
+
+      if (rawScoped !== null) {
+        const parsed = JSON.parse(rawScoped);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.ts === "number" &&
+          Object.prototype.hasOwnProperty.call(parsed, "value")
+        ) {
+          if (now - parsed.ts > DRAFT_TTL_MS) {
+            localStorage.removeItem(scopedKey);
+            return fallback;
+          }
+          return parsed.value;
+        }
+        // Scoped key exists but in legacy shape.
+        localStorage.setItem(scopedKey, JSON.stringify({ v: 1, ts: now, value: parsed }));
+        return parsed;
+      }
+
+      // One-time migration fallback for legacy unscoped keys.
+      const legacyKey = DRAFT_STORAGE_PREFIX + key;
+      const rawLegacy = localStorage.getItem(legacyKey);
+      if (rawLegacy === null) return fallback;
+      const parsedLegacy = JSON.parse(rawLegacy);
+      localStorage.setItem(scopedKey, JSON.stringify({ v: 1, ts: now, value: parsedLegacy }));
+      localStorage.removeItem(legacyKey);
+      return parsedLegacy;
     } catch { return fallback; }
   },
-  clear(key) {
-    try { localStorage.removeItem("st_draft_" + key); } catch {}
+  clear(key, username = "") {
+    try {
+      localStorage.removeItem(draftStorageKey(key, username));
+      localStorage.removeItem(DRAFT_STORAGE_PREFIX + key); // legacy cleanup
+    } catch {}
+  },
+  gc(username = "") {
+    try {
+      const now = Date.now();
+      const user = normalizeDraftUser(username) || activeDraftUser();
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(DRAFT_STORAGE_PREFIX)) continue;
+        if (user && !k.startsWith(`${DRAFT_STORAGE_PREFIX}${user}_`)) continue;
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object" || typeof parsed.ts !== "number") continue;
+          if (now - parsed.ts > DRAFT_TTL_MS) localStorage.removeItem(k);
+        } catch {}
+      }
+    } catch {}
   }
 };
 
