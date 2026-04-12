@@ -1975,7 +1975,7 @@ class TrendDetector {
   //   the shared IndexedDB store so they never bleed into each other, and
   //   each context accumulates its own long-term historical baseline that
   //   survives browser reloads.
-  constructor({ decay = 0.99, minLen = 3, context = "default" } = {}) {
+  constructor({ decay = 0.999, minLen = 3, context = "default" } = {}) {
     this._words   = new Map();
     this._decay   = decay;
     this._minLen  = minLen;
