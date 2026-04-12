@@ -50,12 +50,36 @@ function callWithFallbackAsync(apiCall, args) {
 // Fetch a single Steem account and extract its profile metadata.
 // Returns null if the account does not exist or the request fails.
 const ACCOUNT_CACHE_TTL = 90 * 1000; // 90 seconds
+const ACCOUNT_CACHE_MAX = 500;
 const accountCache = new Map(); // username -> { ts, value }
+const BLOCKCHAIN_CACHE_DEBUG = !!(typeof window !== "undefined" && window.STEEMTWIST_CACHE_DEBUG);
+
+function blockchainCacheDebugLog(...args) {
+  if (BLOCKCHAIN_CACHE_DEBUG) console.warn("[SteemTwist cache]", ...args);
+}
+
+function normalizeBlockchainStorageUsername(username) {
+  return (username || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\-.]/g, "");
+}
+
+function setAccountCached(key, value) {
+  if (accountCache.has(key)) accountCache.delete(key);
+  accountCache.set(key, { ts: Date.now(), value });
+  if (accountCache.size > ACCOUNT_CACHE_MAX) {
+    const oldestKey = accountCache.keys().next().value;
+    if (oldestKey !== undefined) accountCache.delete(oldestKey);
+  }
+  return value;
+}
 
 function fetchAccount(username) {
   return new Promise(resolve => {
     if (!username) return resolve(null);
-    const key = String(username).toLowerCase();
+    const key = normalizeBlockchainStorageUsername(username) || String(username).toLowerCase();
     const cached = accountCache.get(key);
     if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
       const v = cached.value;
@@ -64,8 +88,7 @@ function fetchAccount(username) {
     }
 
     function setCached(value) {
-      accountCache.set(key, { ts: Date.now(), value });
-      return value;
+      return setAccountCached(key, value);
     }
 
     steem.api.getAccounts([username], (err, result) => {
@@ -1144,15 +1167,33 @@ function unpinTwist(username, callback) {
 const PIN_CACHE_KEY = "steemtwist_pending_pin";
 const PIN_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+function pinCacheKey(username) {
+  return PIN_CACHE_KEY + "_" + normalizeBlockchainStorageUsername(username);
+}
+
+function legacyPinCacheKey(username) {
+  return PIN_CACHE_KEY + "_" + (username || "");
+}
+
 function setPinCache(username, author, permlink) {
   try {
-    localStorage.setItem(PIN_CACHE_KEY + "_" + username,
+    localStorage.setItem(pinCacheKey(username),
       JSON.stringify({ author, permlink, ts: Date.now() }));
-  } catch {}
+    const legacyKey = legacyPinCacheKey(username);
+    if (legacyKey !== pinCacheKey(username)) localStorage.removeItem(legacyKey);
+  } catch (e) {
+    blockchainCacheDebugLog("Failed to set pin cache", e);
+  }
 }
 
 function clearPinCache(username) {
-  try { localStorage.removeItem(PIN_CACHE_KEY + "_" + username); } catch {}
+  try {
+    localStorage.removeItem(pinCacheKey(username));
+    const legacyKey = legacyPinCacheKey(username);
+    if (legacyKey !== pinCacheKey(username)) localStorage.removeItem(legacyKey);
+  } catch (e) {
+    blockchainCacheDebugLog("Failed to clear pin cache", e);
+  }
 }
 
 // Steem username: 3-16 chars, lowercase a-z / 0-9 / hyphens / dots.
@@ -1162,11 +1203,14 @@ const _VALID_STEEM_PERMLINK = /^[a-z0-9-]{1,255}$/;
 
 function getPinCache(username) {
   try {
-    const raw = localStorage.getItem(PIN_CACHE_KEY + "_" + username);
+    const normalizedKey = pinCacheKey(username);
+    const legacyKey = legacyPinCacheKey(username);
+    const raw = localStorage.getItem(normalizedKey) || localStorage.getItem(legacyKey);
     if (!raw) return null;
     const cached = JSON.parse(raw);
     if (Date.now() - cached.ts > PIN_CACHE_TTL) {
-      localStorage.removeItem(PIN_CACHE_KEY + "_" + username);
+      localStorage.removeItem(normalizedKey);
+      if (legacyKey !== normalizedKey) localStorage.removeItem(legacyKey);
       return null;
     }
     // cached.author === null signals a pending unpin — allow it through.
@@ -1175,8 +1219,12 @@ function getPinCache(username) {
       if (typeof cached.author   !== "string" || !_VALID_STEEM_NAME.test(cached.author))      return null;
       if (typeof cached.permlink !== "string" || !_VALID_STEEM_PERMLINK.test(cached.permlink)) return null;
     }
+    if (legacyKey !== normalizedKey) localStorage.removeItem(legacyKey);
     return cached;
-  } catch { return null; }
+  } catch (e) {
+    blockchainCacheDebugLog("Failed to read pin cache", e);
+    return null;
+  }
 }
 
 // Scan a user's account history for the latest "steemtwist" custom_json

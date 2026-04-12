@@ -95,6 +95,25 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 - 🔔 **Signals** — Twist Love, Replies, Mentions, Follows, Retwists, Secret Twists; All / Unread tabs
 - 🔒 **Secret Twists** — end-to-end encrypted; unlimited length; nested encrypted replies; markdown; Write / Preview; only recipient can reply
 
+## Client-side cache key schema
+
+SteemTwist uses browser `localStorage` for lightweight client cache/state. Username-scoped keys use a normalized username (`trim` + lowercase + `[a-z0-9-.]` only) to avoid duplicate logical keys.
+
+| Key pattern | Purpose | TTL / lifecycle |
+|---|---|---|
+| `steem_user` | Last logged-in username used by the app | Persisted until logout |
+| `steemtwist_understream` | Global Understream ON/OFF preference | Persisted until changed |
+| `steemtwist_signals_read_<username>` | Signals read markers (`{ v, items: [{ id, ts }] }`) | 180-day TTL per item, capped to 2000 IDs |
+| `steemtwist_pending_pin_<username>` | Pending pin/unpin optimistic cache (`{ author, permlink, ts }`) | 5-minute TTL |
+| `st_draft_<username>_<draftKey>` | Draft cache for composers/replies/edits | 30-day TTL, periodic GC |
+| `st_draft_<draftKey>` | Legacy unscoped draft key (migrated on read) | Migrated to scoped key, then removed |
+
+Debugging cache behavior can be enabled with:
+
+```js
+window.STEEMTWIST_CACHE_DEBUG = true;
+```
+
 ---
 
 ## Live Twists ⚡

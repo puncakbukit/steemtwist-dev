@@ -12,6 +12,8 @@ function postKey(post) {
 
 const SIGNALS_READ_MAX = 2000;
 const SIGNALS_READ_TTL = 180 * 24 * 60 * 60 * 1000; // 180 days
+const STEEM_USER_KEY = "steem_user";
+const APP_CACHE_DEBUG = !!(typeof window !== "undefined" && window.STEEMTWIST_CACHE_DEBUG);
 
 function normalizeStoredBool(raw, fallback = false) {
   if (raw === "true") return true;
@@ -19,14 +21,46 @@ function normalizeStoredBool(raw, fallback = false) {
   return fallback;
 }
 
+function normalizeAppStorageUsername(username) {
+  return (username || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\-.]/g, "");
+}
+
+function appCacheDebugLog(...args) {
+  if (APP_CACHE_DEBUG) console.warn("[SteemTwist cache]", ...args);
+}
+
+function getStoredUsername() {
+  try {
+    const stored = localStorage.getItem(STEEM_USER_KEY) || "";
+    const normalized = normalizeAppStorageUsername(stored);
+    if (stored && normalized && stored !== normalized) {
+      localStorage.setItem(STEEM_USER_KEY, normalized);
+    }
+    return normalized;
+  } catch (e) {
+    appCacheDebugLog("Failed to read steem_user", e);
+    return "";
+  }
+}
+
 function signalsReadStorageKey(username) {
-  return "steemtwist_signals_read_" + username;
+  return "steemtwist_signals_read_" + normalizeAppStorageUsername(username);
+}
+
+function legacySignalsReadStorageKey(username) {
+  return "steemtwist_signals_read_" + (username || "");
 }
 
 function loadReadSignalEntries(username) {
   if (!username) return [];
   try {
-    const raw = localStorage.getItem(signalsReadStorageKey(username));
+    const normalizedKey = signalsReadStorageKey(username);
+    const legacyKey = legacySignalsReadStorageKey(username);
+    const raw = localStorage.getItem(normalizedKey) || localStorage.getItem(legacyKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     const now = Date.now();
@@ -64,7 +98,8 @@ function loadReadSignalEntries(username) {
     // Persist normalized shape so legacy arrays and expired entries are pruned.
     persistReadSignalEntries(username, normalized);
     return normalized;
-  } catch {
+  } catch (e) {
+    appCacheDebugLog("Failed to load signal read entries", e);
     return [];
   }
 }
@@ -80,7 +115,13 @@ function persistReadSignalEntries(username, entries) {
       signalsReadStorageKey(username),
       JSON.stringify({ v: 1, items: normalized })
     );
-  } catch {}
+    const legacyKey = legacySignalsReadStorageKey(username);
+    if (legacyKey !== signalsReadStorageKey(username)) {
+      localStorage.removeItem(legacyKey);
+    }
+  } catch (e) {
+    appCacheDebugLog("Failed to persist signal read entries", e);
+  }
 }
 
 function readSignalIdSet(username) {
@@ -2074,7 +2115,7 @@ const App = {
   },
 
   setup() {
-    const username      = ref(localStorage.getItem("steem_user") || "");
+    const username      = ref(getStoredUsername());
     const hasKeychain   = ref(false);
     const keychainReady = ref(false);
     const loginError    = ref("");
@@ -2101,8 +2142,9 @@ const App = {
 
     onMounted(() => {
       setRPC(0);
-      if (typeof draftStorage !== "undefined" && typeof draftStorage.gc === "function") {
-        draftStorage.gc();
+      if (typeof draftStorage !== "undefined" && typeof draftStorage.gcAll === "function") {
+        draftStorage.gcAll();
+        setInterval(() => draftStorage.gcAll(), 30 * 60 * 1000);
       }
       // Always load a profile — logged-in user's own, or @steemtwist as fallback
       loadProfile(username.value);
@@ -2132,26 +2174,31 @@ const App = {
         return;
       }
       if (!user) return;
+      const normalizedUser = normalizeAppStorageUsername(user);
+      if (!normalizedUser) {
+        loginError.value = "Invalid Steem username format.";
+        return;
+      }
       isLoggingIn.value = true;
-      keychainLogin(user, (res) => {
+      keychainLogin(normalizedUser, (res) => {
         isLoggingIn.value = false;
         if (!res.success) {
           loginError.value = "Keychain sign-in was rejected.";
           return;
         }
-        const verified = res.data?.username || res.username;
-        if (verified !== user) {
+        const verified = normalizeAppStorageUsername(res.data?.username || res.username);
+        if (verified !== normalizedUser) {
           loginError.value = "Signed account does not match entered username.";
           return;
         }
-        username.value      = user;
+        username.value      = normalizedUser;
         hasKeychain.value   = true;
-        localStorage.setItem("steem_user", user);
+        localStorage.setItem(STEEM_USER_KEY, normalizedUser);
         loginError.value    = "";
         showLoginForm.value = false;
-        notify("Logged in as @" + user, "success");
-        loadProfile(user);
-        refreshUnreadSignals(user);
+        notify("Logged in as @" + normalizedUser, "success");
+        loadProfile(normalizedUser);
+        refreshUnreadSignals(normalizedUser);
       });
     }
 
@@ -2159,7 +2206,7 @@ const App = {
       username.value      = "";
       loginError.value    = "";
       showLoginForm.value = false;
-      localStorage.removeItem("steem_user");
+      localStorage.removeItem(STEEM_USER_KEY);
       notify("Logged out.", "info");
       unreadSignals.value = 0;
       loadProfile("");   // reload @steemtwist as fallback

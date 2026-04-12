@@ -10,6 +10,11 @@
 // All operations are try/caught so storage quota errors never break the UI.
 const DRAFT_STORAGE_PREFIX = "st_draft_";
 const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const DRAFT_CACHE_DEBUG = !!(typeof window !== "undefined" && window.STEEMTWIST_CACHE_DEBUG);
+
+function draftCacheDebugLog(...args) {
+  if (DRAFT_CACHE_DEBUG) console.warn("[SteemTwist cache]", ...args);
+}
 
 function normalizeDraftUser(user) {
   return (user || "").toString().trim().toLowerCase().replace(/[^a-z0-9\-.]/g, "");
@@ -34,7 +39,9 @@ const draftStorage = {
         draftStorageKey(key, username),
         JSON.stringify({ v: 1, ts: Date.now(), value })
       );
-    } catch {}
+    } catch (e) {
+      draftCacheDebugLog("Draft save failed", key, e);
+    }
   },
   load(key, fallback = null, username = "") {
     try {
@@ -69,13 +76,18 @@ const draftStorage = {
       localStorage.setItem(scopedKey, JSON.stringify({ v: 1, ts: now, value: parsedLegacy }));
       localStorage.removeItem(legacyKey);
       return parsedLegacy;
-    } catch { return fallback; }
+    } catch (e) {
+      draftCacheDebugLog("Draft load failed", key, e);
+      return fallback;
+    }
   },
   clear(key, username = "") {
     try {
       localStorage.removeItem(draftStorageKey(key, username));
       localStorage.removeItem(DRAFT_STORAGE_PREFIX + key); // legacy cleanup
-    } catch {}
+    } catch (e) {
+      draftCacheDebugLog("Draft clear failed", key, e);
+    }
   },
   gc(username = "") {
     try {
@@ -91,9 +103,33 @@ const draftStorage = {
           const parsed = JSON.parse(raw);
           if (!parsed || typeof parsed !== "object" || typeof parsed.ts !== "number") continue;
           if (now - parsed.ts > DRAFT_TTL_MS) localStorage.removeItem(k);
-        } catch {}
+        } catch (e) {
+          draftCacheDebugLog("Draft gc parse failed", k, e);
+        }
       }
-    } catch {}
+    } catch (e) {
+      draftCacheDebugLog("Draft gc failed", e);
+    }
+  },
+  gcAll() {
+    try {
+      const now = Date.now();
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(DRAFT_STORAGE_PREFIX)) continue;
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object" || typeof parsed.ts !== "number") continue;
+          if (now - parsed.ts > DRAFT_TTL_MS) localStorage.removeItem(k);
+        } catch (e) {
+          draftCacheDebugLog("Draft gcAll parse failed", k, e);
+        }
+      }
+    } catch (e) {
+      draftCacheDebugLog("Draft gcAll failed", e);
+    }
   }
 };
 
