@@ -149,7 +149,7 @@ function markSignalIdsRead(username, ids) {
 const ExploreView = {
   name: "ExploreView",
   inject: ["username", "hasKeychain", "notify", "understreamOn", "toggleUnderstream"],
-  components: { TwistComposerComponent, TwistCardComponent, LoadingSpinnerComponent },
+  components: { TwistComposerComponent, TwistCardComponent, LoadingSpinnerComponent, TrendingWidgetComponent },
 
   data() {
     return {
@@ -165,7 +165,11 @@ const ExploreView = {
       pageSize:            20,
       monthsLoaded:        1,      // how many calendar months fetched (Twist Stream)
       loadingOlderMonth:   false,  // true while fetching an older page
-      understreamCursor:   null    // { author, permlink } cursor for Understream paging
+      understreamCursor:   null,   // { author, permlink } cursor for Understream paging
+      // Trend detection
+      _trendDetector:      null,   // TrendDetector instance (non-reactive, managed manually)
+      trends:              [],     // [{ word, score, count, recent }] — reactive output
+      _decayTimer:         null,   // interval ID for firehose decay ticks
     };
   },
 
@@ -204,14 +208,35 @@ const ExploreView = {
   },
 
   async created() {
+    this._trendDetector = new TrendDetector();
     await this.loadFeed(true);
   },
 
   unmounted() {
     this.stopFirehose();
+    this._stopDecayTimer();
   },
 
   methods: {
+    // ── Trend detection helpers ──────────────────────────────
+    _refreshTrends() {
+      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+    },
+    _startDecayTimer() {
+      this._stopDecayTimer();
+      // Decay every 8 seconds while the firehose is live so words that stop
+      // appearing naturally fall off the trending list over time.
+      this._decayTimer = setInterval(() => {
+        if (this._trendDetector) {
+          this._trendDetector.decay();
+          this._refreshTrends();
+        }
+      }, 8000);
+    },
+    _stopDecayTimer() {
+      if (this._decayTimer) { clearInterval(this._decayTimer); this._decayTimer = null; }
+    },
+
     // refreshPin: if true, also re-fetches the pinned twist from chain.
     // Kept false for vote-triggered reloads so a just-broadcast pin isn't
     // overwritten before the node has indexed it.
@@ -241,6 +266,11 @@ const ExploreView = {
         );
         this.twists      = [...realTimeOnly, ...fresh];
         this.pinnedTwist = pinned;
+
+        // Reset detector and ingest the fresh batch
+        this._trendDetector.reset();
+        this._trendDetector.ingestPosts(fresh);
+        this._refreshTrends();
       } catch (e) {
         this.notify("Could not load twists. Please try again.", "error");
       }
@@ -276,6 +306,8 @@ const ExploreView = {
             this.notify("No more posts found.", "info");
           } else {
             this.twists = [...this.twists, ...fresh];
+            this._trendDetector.ingestPosts(fresh);
+            this._refreshTrends();
           }
           this.understreamCursor = result.nextCursor;
         } else {
@@ -287,6 +319,8 @@ const ExploreView = {
             this.notify("No twists found in that month.", "info");
           } else {
             this.twists = [...this.twists, ...fresh];
+            this._trendDetector.ingestPosts(fresh);
+            this._refreshTrends();
           }
           this.monthsLoaded++;
         }
@@ -346,6 +380,9 @@ const ExploreView = {
           }
           if (this.twists.some(p => p.permlink === post.permlink)) return;
           this.twists.push(post);
+          // Ingest the live post into the trend detector immediately
+          this._trendDetector.ingestPost(post);
+          this._refreshTrends();
           setTimeout(() => {
             const p = this.twists.find(t => t.permlink === post.permlink);
             if (p) p._firehose = false;
@@ -371,6 +408,7 @@ const ExploreView = {
         // Pass understream flag so the firehose uses the correct filter
         { understream: this.understreamOn }
       );
+      this._startDecayTimer();
     },
 
     stopFirehose() {
@@ -378,12 +416,20 @@ const ExploreView = {
         this.firehoseStream.stop();
         this.firehoseStream = null;
       }
+      this._stopDecayTimer();
       this.firehoseOn = false;
     }
   },
 
   template: `
     <div style="margin-top:20px;">
+
+      <!-- Trending widget — shown once posts are loaded -->
+      <trending-widget-component
+        v-if="!loading"
+        :trends="trends"
+        :source="understreamOn ? 'Understream' + (firehoseOn ? ' · Firehose' : '') : 'Explore' + (firehoseOn ? ' · Firehose' : '')"
+      ></trending-widget-component>
 
       <!-- Top bar -->
       <div style="
@@ -558,7 +604,7 @@ const ExploreView = {
 const HomeView = {
   name: "HomeView",
   inject: ["username", "hasKeychain", "notify", "understreamOn", "toggleUnderstream"],
-  components: { TwistComposerComponent, TwistCardComponent, LoadingSpinnerComponent },
+  components: { TwistComposerComponent, TwistCardComponent, LoadingSpinnerComponent, TrendingWidgetComponent },
 
   data() {
     return {
@@ -574,7 +620,11 @@ const HomeView = {
       pageSize:            20,          // posts per page
       monthsLoaded:        1,           // how many calendar months fetched (Twist Stream)
       loadingOlderMonth:   false,       // true while fetching an older page
-      understreamCursor:   null         // unused for HomeView (multi-user feed)
+      understreamCursor:   null,        // unused for HomeView (multi-user feed)
+      // Trend detection
+      _trendDetector:      null,
+      trends:              [],
+      _decayTimer:         null,
     };
   },
 
@@ -586,11 +636,13 @@ const HomeView = {
   },
 
   async created() {
+    this._trendDetector = new TrendDetector();
     await this.loadFeed();
   },
 
   unmounted() {
     this.stopFirehose();
+    this._stopDecayTimer();
   },
 
   watch: {
@@ -602,6 +654,23 @@ const HomeView = {
   },
 
   methods: {
+    // ── Trend detection helpers ──────────────────────────────
+    _refreshTrends() {
+      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+    },
+    _startDecayTimer() {
+      this._stopDecayTimer();
+      this._decayTimer = setInterval(() => {
+        if (this._trendDetector) {
+          this._trendDetector.decay();
+          this._refreshTrends();
+        }
+      }, 8000);
+    },
+    _stopDecayTimer() {
+      if (this._decayTimer) { clearInterval(this._decayTimer); this._decayTimer = null; }
+    },
+
     // Fetch the next older calendar month from the blockchain and merge posts.
     async loadOlderMonth() {
       if (this.loadingOlderMonth || this.understreamOn) return;
@@ -616,6 +685,8 @@ const HomeView = {
           this.notify("No twists found in that month.", "info");
         } else {
           this.twists = [...this.twists, ...fresh];
+          this._trendDetector.ingestPosts(fresh);
+          this._refreshTrends();
         }
         this.monthsLoaded++;
       } catch {
@@ -630,6 +701,7 @@ const HomeView = {
       this.twists    = [];
       this.page      = 1;
       this.followingSet = new Set();
+      this._trendDetector.reset();
 
       if (!this.username) { this.loading = false; return; }
 
@@ -677,6 +749,8 @@ const HomeView = {
           }
         }
         this.twists = merged;
+        this._trendDetector.ingestPosts(merged);
+        this._refreshTrends();
       } catch {
         this.notify("Could not load home feed.", "error");
       }
@@ -729,6 +803,8 @@ const HomeView = {
           }
           if (this.twists.some(p => p.permlink === post.permlink)) return;
           this.twists.push(post);
+          this._trendDetector.ingestPost(post);
+          this._refreshTrends();
           setTimeout(() => {
             const p = this.twists.find(t => t.permlink === post.permlink);
             if (p) p._firehose = false;
@@ -746,16 +822,25 @@ const HomeView = {
         // understream + followingSet filter — both handled inside startFirehose
         { understream: this.understreamOn, followingSet: this.followingSet }
       );
+      this._startDecayTimer();
     },
 
     stopFirehose() {
       if (this.firehoseStream) { this.firehoseStream.stop(); this.firehoseStream = null; }
+      this._stopDecayTimer();
       this.firehoseOn = false;
     }
   },
 
   template: `
     <div style="margin-top:20px;">
+
+      <!-- Trending widget -->
+      <trending-widget-component
+        v-if="!loading && twists.length"
+        :trends="trends"
+        :source="understreamOn ? 'Home · Understream' + (firehoseOn ? ' · Firehose' : '') : 'Home' + (firehoseOn ? ' · Firehose' : '')"
+      ></trending-widget-component>
 
       <!-- Top bar -->
       <div style="
@@ -918,7 +1003,7 @@ const HomeView = {
 const ProfileView = {
   name: "ProfileView",
   inject: ["username", "hasKeychain", "notify", "understreamOn", "toggleUnderstream"],
-  components: { UserProfileComponent, TwistCardComponent, LoadingSpinnerComponent },
+  components: { UserProfileComponent, TwistCardComponent, LoadingSpinnerComponent, TrendingWidgetComponent },
 
   data() {
     return {
@@ -929,11 +1014,15 @@ const ProfileView = {
       page:           1,
       pageSize:       20,
       nextCursor:     null,   // account-history cursor for loading older twists
-      loadingOlder:   false   // true while fetching older history
+      loadingOlder:   false,  // true while fetching older history
+      // Trend detection
+      _trendDetector: null,
+      trends:         [],
     };
   },
 
   async created() {
+    this._trendDetector = new TrendDetector();
     await this.loadProfile();
   },
 
@@ -963,12 +1052,17 @@ const ProfileView = {
   },
 
   methods: {
+    _refreshTrends() {
+      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+    },
+
     async loadProfile(refreshPin = true) {
       const user    = this.$route.params.user;
       this.loading  = true;
       this.page     = 1;
       this.userTwists  = [];
       this.profileData = null;
+      this._trendDetector.reset();
       if (refreshPin) this.pinnedTwist = null;
       try {
         const pinPromise = refreshPin
@@ -990,6 +1084,8 @@ const ProfileView = {
         this.userTwists  = result.posts;
         this.nextCursor  = result.nextCursor;
         this.pinnedTwist = pinned;
+        this._trendDetector.ingestPosts(result.posts);
+        this._refreshTrends();
       } catch {
         this.notify("Failed to load profile.", "error");
       }
@@ -1013,6 +1109,8 @@ const ProfileView = {
           this.notify("No older posts found.", "info");
         } else {
           this.userTwists = [...this.userTwists, ...fresh];
+          this._trendDetector.ingestPosts(fresh);
+          this._refreshTrends();
         }
         this.nextCursor = result.nextCursor;
       } catch {
@@ -1040,13 +1138,19 @@ const ProfileView = {
       </div>
 
       <template v-else>
-        <!-- Show profile header only when viewing someone else's profile.
-             The logged-in user's own header is already in the global banner. -->
         <!-- Profile card — always shown (own profile or other) -->
         <user-profile-component
           :profile-data="profileData"
           :twist-count="userTwists.length"
         ></user-profile-component>
+
+        <!-- Trending widget — collapsed by default on profile, unobtrusive -->
+        <trending-widget-component
+          v-if="userTwists.length"
+          :trends="trends"
+          :source="'@' + $route.params.user + (understreamOn ? ' · Understream' : '')"
+          :start-collapsed="true"
+        ></trending-widget-component>
 
         <div style="margin-top:12px;">
 
@@ -1311,7 +1415,7 @@ const AboutView = {
 const SignalsView = {
   name: "SignalsView",
   inject: ["username", "notify", "unreadSignals", "refreshUnreadSignals", "understreamOn", "toggleUnderstream"],
-  components: { LoadingSpinnerComponent, SignalItemComponent },
+  components: { LoadingSpinnerComponent, SignalItemComponent, TrendingWidgetComponent },
 
   data() {
     return {
@@ -1325,7 +1429,10 @@ const SignalsView = {
       page:         1,
       pageSize:     30,
       nextCursor:   null,   // account-history cursor for loading older signals
-      loadingOlder: false   // true while fetching older history
+      loadingOlder: false,  // true while fetching older history
+      // Trend detection
+      _trendDetector: null,
+      trends:         [],
     };
   },
 
@@ -1361,6 +1468,7 @@ const SignalsView = {
   },
 
   async created() {
+    this._trendDetector = new TrendDetector();
     // Initialise readIds once from localStorage — no further polling needed.
     this.readIds = readSignalIdSet(this.username);
     if (!this.username) { this.loading = false; return; }
@@ -1368,6 +1476,8 @@ const SignalsView = {
       const result = await fetchSignals(this.username);
       this.signals    = result.signals;
       this.nextCursor = result.nextCursor;
+      this._trendDetector.ingestSignals(result.signals);
+      this._refreshTrends();
     } catch {
       this.notify("Could not load signals.", "error");
     }
@@ -1376,6 +1486,10 @@ const SignalsView = {
   },
 
   methods: {
+    _refreshTrends() {
+      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+    },
+
     // Scan further back in account history for older signals.
     async loadOlderSignals() {
       if (this.loadingOlder || this.nextCursor === null) return;
@@ -1389,6 +1503,8 @@ const SignalsView = {
         } else {
           this.signals = [...this.signals, ...fresh];
           this.markAllRead();
+          this._trendDetector.ingestSignals(fresh);
+          this._refreshTrends();
         }
         this.nextCursor = result.nextCursor;
       } catch {
@@ -1461,48 +1577,60 @@ const SignalsView = {
       <!-- Loading -->
       <loading-spinner-component v-else-if="loading" message="Loading signals…"></loading-spinner-component>
 
-      <!-- Empty -->
-      <div v-else-if="filteredSignals.length === 0" style="
-        background:#1e1535;border:1px solid #2e2050;border-radius:12px;
-        padding:40px;text-align:center;color:#5a4e70;font-size:15px;
-      ">
-        {{ filter === 'unread' ? 'No unread signals.' : 'No signals yet.' }}
-      </div>
+      <template v-else>
 
-      <!-- Signal list -->
-      <div v-else style="
-        background:#1e1535;border:1px solid #2e2050;border-radius:12px;overflow:hidden;
-      ">
-        <signal-item-component
-          v-for="signal in pagedSignals"
-          :key="signal.id"
-          :signal="signal"
-          :read="isRead(signal)"
-        ></signal-item-component>
-      </div>
+        <!-- Trending widget — collapsed by default on Signals page -->
+        <trending-widget-component
+          v-if="signals.length"
+          :trends="trends"
+          :source="understreamOn ? 'Signals · Understream' : 'Signals'"
+          :start-collapsed="true"
+        ></trending-widget-component>
 
-      <!-- Load More (client-side page through already-fetched signals) -->
-      <div v-if="hasMore" style="text-align:center;margin:16px 0;">
-        <button
-          @click="page++"
-          style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                 border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-        >Load more</button>
-      </div>
-      <!-- Load older signals from blockchain when current pages are exhausted -->
-      <div v-else-if="filteredSignals.length > 0 && username && !loading && nextCursor !== null"
-           style="text-align:center;margin:16px 0;">
-        <button
-          @click="loadOlderSignals"
-          :disabled="loadingOlder"
-          style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                 border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
-        >{{ loadingOlder ? "Loading…" : "Load older signals" }}</button>
-      </div>
-      <div v-else-if="filteredSignals.length > 0 && username && !loading && nextCursor === null"
-           style="text-align:center;color:#5a4e70;font-size:12px;padding:12px 0;">
-        — end of signals —
-      </div>
+        <!-- Empty -->
+        <div v-if="filteredSignals.length === 0" style="
+          background:#1e1535;border:1px solid #2e2050;border-radius:12px;
+          padding:40px;text-align:center;color:#5a4e70;font-size:15px;
+        ">
+          {{ filter === 'unread' ? 'No unread signals.' : 'No signals yet.' }}
+        </div>
+
+        <!-- Signal list -->
+        <div v-else style="
+          background:#1e1535;border:1px solid #2e2050;border-radius:12px;overflow:hidden;
+        ">
+          <signal-item-component
+            v-for="signal in pagedSignals"
+            :key="signal.id"
+            :signal="signal"
+            :read="isRead(signal)"
+          ></signal-item-component>
+        </div>
+
+        <!-- Load More (client-side page through already-fetched signals) -->
+        <div v-if="hasMore" style="text-align:center;margin:16px 0;">
+          <button
+            @click="page++"
+            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
+                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+          >Load more</button>
+        </div>
+        <!-- Load older signals from blockchain when current pages are exhausted -->
+        <div v-else-if="filteredSignals.length > 0 && username && !loading && nextCursor !== null"
+             style="text-align:center;margin:16px 0;">
+          <button
+            @click="loadOlderSignals"
+            :disabled="loadingOlder"
+            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
+                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+          >{{ loadingOlder ? "Loading…" : "Load older signals" }}</button>
+        </div>
+        <div v-else-if="filteredSignals.length > 0 && username && !loading && nextCursor === null"
+             style="text-align:center;color:#5a4e70;font-size:12px;padding:12px 0;">
+          — end of signals —
+        </div>
+
+      </template>
 
     </div>
   `
@@ -2200,11 +2328,6 @@ const App = {
         username.value      = normalizedUser;
         hasKeychain.value   = true;
         localStorage.setItem(STEEM_USER_KEY, normalizedUser);
-        // Reload the Understream preference for this specific account.
-        understreamOn.value = normalizeStoredBool(
-          localStorage.getItem(understreamStorageKey(normalizedUser)),
-          false
-        );
         loginError.value    = "";
         showLoginForm.value = false;
         notify("Logged in as @" + normalizedUser, "success");
@@ -2220,31 +2343,17 @@ const App = {
       localStorage.removeItem(STEEM_USER_KEY);
       notify("Logged out.", "info");
       unreadSignals.value = 0;
-      // Revert to the unscoped (logged-out) Understream preference.
-      understreamOn.value = normalizeStoredBool(
-        localStorage.getItem(understreamStorageKey("")),
-        false
-      );
       loadProfile("");   // reload @steemtwist as fallback
     }
 
-    // Global Understream toggle — persisted in localStorage, scoped per user so
-    // different accounts on the same browser keep independent preferences.
-    // Logged-out state (empty username) uses the legacy unscoped key so the
-    // preference is still remembered before the user signs in.
-    function understreamStorageKey(user) {
-      const u = normalizeAppStorageUsername(user || "");
-      return u ? `steemtwist_understream_${u}` : "steemtwist_understream";
-    }
+    // Global Understream toggle — persisted in localStorage.
+    // OFF = Twist Stream only (SteemTwist data); ON = full Steem Understream.
     const understreamOn = ref(
-      normalizeStoredBool(
-        localStorage.getItem(understreamStorageKey(username.value)),
-        false
-      )
+      normalizeStoredBool(localStorage.getItem("steemtwist_understream"), false)
     );
     function toggleUnderstream() {
       understreamOn.value = !understreamOn.value;
-      localStorage.setItem(understreamStorageKey(username.value), String(understreamOn.value));
+      localStorage.setItem("steemtwist_understream", String(understreamOn.value));
     }
 
     // Unread signal count — recomputed whenever the user navigates to /signals
@@ -2474,6 +2583,7 @@ const App = {
 const vueApp = createApp(App);
 
 vueApp.component("AppNotificationComponent", AppNotificationComponent);
+vueApp.component("TrendingWidgetComponent",   TrendingWidgetComponent);
 vueApp.component("SignalItemComponent",       SignalItemComponent);
 vueApp.component("UserRowComponent",             UserRowComponent);
 vueApp.component("SecretTwistComposerComponent", SecretTwistComposerComponent);

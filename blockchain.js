@@ -51,8 +51,7 @@ function callWithFallbackAsync(apiCall, args) {
 // Returns null if the account does not exist or the request fails.
 const ACCOUNT_CACHE_TTL = 90 * 1000; // 90 seconds
 const ACCOUNT_CACHE_MAX = 500;
-const accountCache    = new Map(); // username -> { ts, value }
-const accountInFlight = new Map(); // username -> Promise — deduplicates concurrent fetches
+const accountCache = new Map(); // username -> { ts, value }
 const BLOCKCHAIN_CACHE_DEBUG = !!(typeof window !== "undefined" && window.STEEMTWIST_CACHE_DEBUG);
 
 function blockchainCacheDebugLog(...args) {
@@ -78,28 +77,16 @@ function setAccountCached(key, value) {
 }
 
 function fetchAccount(username) {
-  if (!username) return Promise.resolve(null);
-  const key = normalizeBlockchainStorageUsername(username) || String(username).toLowerCase();
+  return new Promise(resolve => {
+    if (!username) return resolve(null);
+    const key = normalizeBlockchainStorageUsername(username) || String(username).toLowerCase();
+    const cached = accountCache.get(key);
+    if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
+      const v = cached.value;
+      // Return a copy so callers don't accidentally mutate cache.
+      return resolve(v && typeof v === "object" ? { ...v } : v);
+    }
 
-  // 1. Hot-path: valid cache hit — return a copy immediately.
-  const cached = accountCache.get(key);
-  if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
-    const v = cached.value;
-    // Return a copy so callers don't accidentally mutate cache.
-    return Promise.resolve(v && typeof v === "object" ? { ...v } : v);
-  }
-
-  // 2. In-flight dedup: if another caller is already fetching this account,
-  //    share the same Promise instead of firing a duplicate RPC call.
-  if (accountInFlight.has(key)) {
-    blockchainCacheDebugLog("in-flight hit", key);
-    // Each caller gets its own copy so they can't mutate each other's object.
-    return accountInFlight.get(key).then(v => v && typeof v === "object" ? { ...v } : v);
-  }
-
-  // 3. Cold fetch — create the promise, register it in the in-flight map, and
-  //    remove it when the fetch settles (whether it succeeds or fails).
-  const promise = new Promise(resolve => {
     function setCached(value) {
       return setAccountCached(key, value);
     }
@@ -154,18 +141,10 @@ function fetchAccount(username) {
           created:        account.created || ""
         };
         setCached(normalized);
-        resolve(normalized); // in-flight consumers each get their own copy below
+        resolve({ ...normalized });
       });
     });
-  }).finally(() => {
-    // Always remove from in-flight map once settled so stale entries never linger.
-    accountInFlight.delete(key);
-    blockchainCacheDebugLog("in-flight settled", key);
   });
-
-  accountInFlight.set(key, promise);
-  // The originating caller also gets its own copy of the resolved value.
-  return promise.then(v => v && typeof v === "object" ? { ...v } : v);
 }
 
 // ---- Post / comment helpers ----
@@ -1307,13 +1286,11 @@ function fetchPinnedTwist(username) {
       if (cached.author === null) {
         // cached unpin — chain may still show old pin
         found = null;
-        // Chain has caught up with the unpin when it no longer returns a pin.
-        if (chainResult === null) clearPinCache(username);
       } else if (!chainResult || chainResult.permlink !== cached.permlink) {
         // cached pin not yet on chain — use cache
         found = { author: cached.author, permlink: cached.permlink };
       } else {
-        // chain has caught up with the pin — safe to clear cache
+        // chain has caught up — safe to clear cache
         clearPinCache(username);
       }
     }
@@ -1918,4 +1895,200 @@ function fetchSecretTwistsWithNested(username, monthsBack = 0, options = {}) {
 // Backward-compatible alias for existing call sites.
 function fetchSecretTwists(username, monthsBack = 0) {
   return fetchSecretTwistsWithNested(username, monthsBack);
+}
+
+// ============================================================
+// STEEMTWIST — Client-side Streaming Trend Detector
+// ============================================================
+//
+// Tracks trending words across whatever posts are currently loaded into
+// the browser — Twist Stream, Understream, Firehose, Signals, etc.
+//
+// Model per word:
+//   count  — lifetime occurrences (prevents brand-new hapax words from
+//             scoring too high just because they appeared once right now)
+//   recent — time-decayed occurrence counter; fades with each decay tick
+//
+// Trend score:
+//   score = recent / (count + 1)
+//
+//   • High when a word is appearing frequently *right now* but is not yet
+//     overwhelmingly common in historical context.
+//   • Low for words that have always been frequent (common noise words
+//     should be blocked by the stopword list before reaching the detector).
+//   • Naturally drops to zero as time passes without new occurrences.
+//
+// Usage:
+//   const td = new TrendDetector();
+//   td.ingestPosts(arrayOfPostObjects);   // batch ingest (also decays)
+//   td.ingestSignals(arrayOfSignalObjects);
+//   td.decay();                           // call on a timer for Firehose
+//   const top10 = td.getTrends(10);       // [{ word, score, count, recent }, …]
+//   td.reset();                           // clear all state (e.g. on feed reload)
+
+// Words excluded from trend detection — common Steem boilerplate,
+// markdown noise, stopwords, and single-character tokens.
+const TREND_STOPWORDS = new Set([
+  // English stopwords
+  "the","and","for","are","was","but","not","you","all","can",
+  "her","his","him","she","they","them","their","this","that",
+  "with","from","have","had","has","been","will","would","could",
+  "should","may","might","shall","did","does","done","been","its",
+  "our","out","who","get","got","let","put","see","say","said",
+  "one","two","just","like","more","also","about","into","over",
+  "than","then","when","there","here","where","what","which","how",
+  "some","make","well","back","only","even","still","now","very",
+  // Steem / markdown boilerplate
+  "posted","via","steemtwist","steemit","steem","http","https",
+  "www","com","org","net","sub","img","src","alt","href",
+  // Common markdown / html artefacts
+  "div","span","class","style","width","height","border",
+  // Extremely common English words not already above
+  "yes","use","new","way","day","man","men","woman","women","old",
+  "any","few","own","per","ago","due","set","big","such","both",
+  "those","these","many","much","most","each","other","after",
+  "before","never","always","often","every","while","again","around",
+  "really","great","good","best","first","last","long","little","right",
+  "feel","know","think","come","came","take","took","give","gave",
+  "need","want","look","seen","made","find","found","show","shown",
+  "tell","told","keep","kept","left","turn","move","stop","start",
+  "help","work","works","worked","working","using","used","user",
+  "love","life","time","times","year","years","month","months",
+  "day","days","week","weeks","today","tonight","tomorrow","yesterday",
+  "people","person","place","thing","things","part","parts","point",
+  "world","local","global","social","media","news","post","posts",
+  "thanks","thank","please","sorry","hey","hello","okay","sure","though",
+  "actually","basically","simply","usually","probably","maybe","really",
+]);
+
+class TrendDetector {
+  // decay   — multiplier applied to `recent` on each decay tick (0–1).
+  //           0.85 means a word loses ~15 % of its recent weight per tick.
+  // minLen  — minimum word length to track (filters single-letter noise).
+  constructor({ decay = 0.85, minLen = 3 } = {}) {
+    this._words  = new Map(); // word -> { count, recent }
+    this._decay  = decay;
+    this._minLen = minLen;
+    this._seenPermlinks = new Set(); // dedup: don't count the same post twice
+  }
+
+  // ── Text helpers ─────────────────────────────────────────────────────────
+
+  // Strip Markdown, HTML tags, URLs, and Steem back-links from body text,
+  // then tokenise into lowercase alpha-only words.
+  _tokenize(text) {
+    if (!text || typeof text !== "string") return [];
+    return text
+      // Remove the SteemTwist back-link footer entirely
+      .replace(/\n+<sub>Posted via \[SteemTwist\][^\n]*/gi, "")
+      // Remove HTML tags
+      .replace(/<[^>]+>/g, " ")
+      // Remove URLs (http/https/www)
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/www\.\S+/gi, " ")
+      // Remove Markdown image/link syntax: ![alt](url) and [text](url)
+      .replace(/!?\[[^\]]*\]\([^)]*\)/g, " ")
+      // Remove remaining Markdown symbols
+      .replace(/[#*_`~>|\[\](){}\\^]/g, " ")
+      // Normalise to lowercase alpha only (keep hyphens between words briefly)
+      .toLowerCase()
+      .replace(/[^a-z\s-]/g, " ")
+      // Split hyphens so "machine-learning" becomes two words
+      .replace(/-/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length >= this._minLen && !TREND_STOPWORDS.has(w));
+  }
+
+  // ── Decay ─────────────────────────────────────────────────────────────────
+
+  // Apply the decay factor to every tracked word's `recent` counter.
+  // Call this:
+  //   • once per batch ingest (represents one "moment" passing)
+  //   • on a timer while the Firehose is active
+  decay() {
+    for (const data of this._words.values()) {
+      data.recent *= this._decay;
+    }
+  }
+
+  // ── Ingestion ─────────────────────────────────────────────────────────────
+
+  // Register a single word occurrence.
+  _addWord(word) {
+    let data = this._words.get(word);
+    if (!data) {
+      data = { count: 0, recent: 0 };
+      this._words.set(word, data);
+    }
+    data.count  += 1;
+    data.recent += 1;
+  }
+
+  // Ingest one post body. Returns true if the post was new (not a duplicate).
+  _ingestBody(permlink, body) {
+    if (!permlink || this._seenPermlinks.has(permlink)) return false;
+    this._seenPermlinks.add(permlink);
+    for (const word of this._tokenize(body)) this._addWord(word);
+    return true;
+  }
+
+  // Ingest an array of Steem post objects (shape used by TwistCardComponent).
+  // Applies one decay tick for the batch as a whole so that a large historical
+  // load doesn't artificially inflate recent scores.
+  ingestPosts(posts) {
+    if (!posts || posts.length === 0) return;
+    this.decay();
+    for (const post of posts) {
+      this._ingestBody(post.permlink, post.body);
+    }
+  }
+
+  // Ingest a single real-time post (Firehose). No decay tick — the
+  // continuous timer in the view handles decay for live streams.
+  ingestPost(post) {
+    if (!post) return;
+    this._ingestBody(post.permlink, post.body);
+  }
+
+  // Ingest an array of Signal objects (from fetchSignals / SignalsView).
+  // Extracts text from the signal body and, where available, treats the
+  // actor username and signal type as light signals too.
+  ingestSignals(signals) {
+    if (!signals || signals.length === 0) return;
+    this.decay();
+    for (const s of signals) {
+      // Use signal.id as the dedup key (sequence number string).
+      if (!s.id || this._seenPermlinks.has("sig:" + s.id)) continue;
+      this._seenPermlinks.add("sig:" + s.id);
+      for (const word of this._tokenize(s.body || "")) this._addWord(word);
+      // Treat the actor's username as a lightweight trending term so prolific
+      // interactors surface in the trends (useful on the Signals page).
+      if (s.actor && s.actor.length >= this._minLen) {
+        this._addWord(s.actor.toLowerCase());
+      }
+    }
+  }
+
+  // ── Output ────────────────────────────────────────────────────────────────
+
+  // Return the top N trending words, sorted by score descending.
+  // Only words with a non-trivial recent score are included (recent > 0.01)
+  // to avoid surfacing long-dead terms that still have count > 0.
+  getTrends(topN = 10) {
+    const results = [];
+    for (const [word, data] of this._words.entries()) {
+      if (data.recent < 0.01) continue;
+      const score = data.recent / (data.count + 1);
+      results.push({ word, score, count: data.count, recent: data.recent });
+    }
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topN);
+  }
+
+  // Clear all state — call when the feed reloads from scratch.
+  reset() {
+    this._words.clear();
+    this._seenPermlinks.clear();
+  }
 }

@@ -5626,3 +5626,146 @@ const SecretTwistCardComponent = {
     </div>
   `
 };
+
+// ============================================================
+// TrendingWidgetComponent
+// ============================================================
+//
+// Displays the top trending words from whatever content is currently
+// loaded in a view (posts, signals, firehose). Accepts a `trends`
+// prop (array of { word, score, count, recent }) and an optional
+// `source` label string for the subtitle.
+//
+// Designed to be embedded at the top of any feed view. It is
+// collapsible so it never obstructs the main content, and it
+// never fetches data itself — each view owns its TrendDetector
+// and simply passes the results down.
+const TrendingWidgetComponent = {
+  name: "TrendingWidgetComponent",
+
+  props: {
+    // Array of { word, score, count, recent } — output of TrendDetector.getTrends()
+    trends:  { type: Array, default: () => [] },
+    // Short label shown in the header, e.g. "Explore · Firehose"
+    source:  { type: String, default: "" },
+    // When true, the widget starts collapsed (saves space on Profile/Signals)
+    startCollapsed: { type: Boolean, default: false },
+  },
+
+  data() {
+    return {
+      collapsed: this.startCollapsed,
+    };
+  },
+
+  computed: {
+    // Normalise scores into a 0–100 range for the bar widths,
+    // anchored to the top scorer so bars are always relative.
+    barsData() {
+      if (!this.trends.length) return [];
+      const max = this.trends[0].score || 1;
+      return this.trends.map((t, i) => ({
+        ...t,
+        pct: Math.round((t.score / max) * 100),
+        // Colour cycles through the brand gradient across the list.
+        // hue shifts from blue→purple→pink across the top 10.
+        hue: Math.round(220 + (i / Math.max(this.trends.length - 1, 1)) * 120)
+      }));
+    },
+  },
+
+  template: `
+    <div style="
+      max-width:600px;margin:0 auto 14px;
+      background:#1a1030;border:1px solid #2e2050;border-radius:12px;
+      overflow:hidden;font-size:13px;
+    ">
+      <!-- ── Header ─────────────────────────────────────────── -->
+      <div
+        @click="collapsed = !collapsed"
+        style="
+          display:flex;align-items:center;justify-content:space-between;
+          padding:8px 12px;cursor:pointer;
+          background:linear-gradient(90deg,#1e1040 0%,#1a1030 100%);
+          border-bottom:1px solid #2e2050;
+          user-select:none;
+        "
+      >
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:15px;">🔥</span>
+          <span style="
+            font-weight:700;color:#e8e0f0;font-size:13px;letter-spacing:0.3px;
+          ">Trending Now</span>
+          <span v-if="source" style="
+            font-size:11px;color:#5a4e70;font-weight:400;
+          ">· {{ source }}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span v-if="!collapsed && trends.length" style="
+            font-size:11px;color:#5a4e70;
+          ">top {{ trends.length }}</span>
+          <span style="
+            color:#5a4e70;font-size:12px;transition:transform 0.2s;
+            display:inline-block;
+          " :style="{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }">▼</span>
+        </div>
+      </div>
+
+      <!-- ── Body ───────────────────────────────────────────── -->
+      <div v-if="!collapsed">
+
+        <!-- Empty state -->
+        <div v-if="!trends.length" style="
+          padding:14px 14px;color:#5a4e70;font-size:12px;text-align:center;
+        ">
+          Waiting for posts to analyse…
+        </div>
+
+        <!-- Trend bars -->
+        <div v-else style="padding:10px 12px;display:flex;flex-direction:column;gap:5px;">
+          <div
+            v-for="(t, i) in barsData"
+            :key="t.word"
+            style="display:flex;align-items:center;gap:8px;"
+          >
+            <!-- Rank -->
+            <span style="
+              width:16px;text-align:right;font-size:11px;
+              color:#5a4e70;flex-shrink:0;font-variant-numeric:tabular-nums;
+            ">{{ i + 1 }}</span>
+
+            <!-- Bar track -->
+            <div style="flex:1;background:#0f0a1e;border-radius:4px;height:18px;position:relative;overflow:hidden;">
+              <div :style="{
+                width: t.pct + '%',
+                height: '100%',
+                borderRadius: '4px',
+                background: 'linear-gradient(90deg, hsl(' + t.hue + ',70%,45%), hsl(' + (t.hue + 30) + ',80%,55%))',
+                transition: 'width 0.4s ease',
+                opacity: 0.85
+              }"></div>
+              <!-- Word label overlay -->
+              <span style="
+                position:absolute;left:7px;top:50%;transform:translateY(-50%);
+                font-size:12px;font-weight:600;color:#fff;
+                text-shadow:0 1px 3px rgba(0,0,0,0.7);
+                white-space:nowrap;pointer-events:none;
+              ">{{ t.word }}</span>
+            </div>
+
+            <!-- Score badge -->
+            <span :title="'score ' + t.score.toFixed(3) + ' · recent ' + t.recent.toFixed(2) + ' · total ' + t.count" style="
+              width:36px;text-align:right;font-size:11px;
+              color:#9b8db0;flex-shrink:0;font-variant-numeric:tabular-nums;
+            ">{{ (t.score * 100).toFixed(0) }}</span>
+          </div>
+
+          <!-- Legend -->
+          <div style="
+            margin-top:6px;font-size:10px;color:#5a4e70;text-align:right;
+          ">score = recency ÷ (lifetime + 1) · hover bar for details</div>
+        </div>
+      </div>
+    </div>
+  `
+};
