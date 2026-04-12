@@ -1961,18 +1961,28 @@ const TREND_STOPWORDS = new Set([
   "actually","basically","simply","usually","probably","maybe","really",
 ]);
 
+const TREND_DB_NAME = "SteemTwistTrendDB";
+const TREND_DB_STORE = "words";
+const TREND_DB_VERSION = 1;
+const TREND_DB_MAX_WORDS = 8000;
+
 class TrendDetector {
   // decay   — multiplier applied to `recent` on each decay tick (0–1).
   //           0.85 means a word loses ~15 % of its recent weight per tick.
   // minLen  — minimum word length to track (filters single-letter noise).
   constructor({ decay = 0.85, minLen = 3 } = {}) {
-    this._words  = new Map(); // word -> { count, recent }
+    this._words  = new Map(); // word -> { count, recent, lastUpdated }
     this._decay  = decay;
     this._minLen = minLen;
     // Dedup keys:
     //   post:${author}/${permlink} for post bodies
     //   sig:${id}                 for signals
     this._seenPermlinks = new Set(); // don't count the same content twice
+    this._idb = null;
+    this._ready = false;
+    this._pendingOps = [];
+    this._persistTimer = null;
+    this._initPromise = this._initPersistence();
   }
 
   // ── Text helpers ─────────────────────────────────────────────────────────
@@ -2004,14 +2014,28 @@ class TrendDetector {
 
   // ── Decay ─────────────────────────────────────────────────────────────────
 
+  _decayToNow(data, now = Date.now()) {
+    if (!data || typeof data.lastUpdated !== "number") {
+      if (data) data.lastUpdated = now;
+      return data;
+    }
+    const elapsedSeconds = Math.max(0, (now - data.lastUpdated) / 1000);
+    if (elapsedSeconds <= 0) return data;
+    data.recent *= Math.pow(this._decay, elapsedSeconds);
+    data.lastUpdated = now;
+    return data;
+  }
+
   // Apply the decay factor to every tracked word's `recent` counter.
   // Call this:
   //   • once per batch ingest (represents one "moment" passing)
   //   • on a timer while the Firehose is active
   decay() {
-    for (const data of this._words.values()) {
-      data.recent *= this._decay;
-    }
+    this._runOrQueue(() => {
+      const now = Date.now();
+      for (const data of this._words.values()) this._decayToNow(data, now);
+      this._schedulePersist();
+    });
   }
 
   // ── Ingestion ─────────────────────────────────────────────────────────────
@@ -2020,11 +2044,14 @@ class TrendDetector {
   _addWord(word) {
     let data = this._words.get(word);
     if (!data) {
-      data = { count: 0, recent: 0 };
+      data = { count: 0, recent: 0, lastUpdated: Date.now() };
       this._words.set(word, data);
+    } else {
+      this._decayToNow(data);
     }
     data.count  += 1;
     data.recent += 1;
+    data.lastUpdated = Date.now();
   }
 
   _postDedupKey(author, permlink) {
@@ -2049,17 +2076,21 @@ class TrendDetector {
   // load doesn't artificially inflate recent scores.
   ingestPosts(posts) {
     if (!posts || posts.length === 0) return;
-    this.decay();
-    for (const post of posts) {
-      this._ingestBody(post.author, post.permlink, post.body);
-    }
+    this._runOrQueue(() => {
+      this.decay();
+      for (const post of posts) this._ingestBody(post.author, post.permlink, post.body);
+      this._schedulePersist();
+    });
   }
 
   // Ingest a single real-time post (Firehose). No decay tick — the
   // continuous timer in the view handles decay for live streams.
   ingestPost(post) {
     if (!post) return;
-    this._ingestBody(post.author, post.permlink, post.body);
+    this._runOrQueue(() => {
+      this._ingestBody(post.author, post.permlink, post.body);
+      this._schedulePersist();
+    });
   }
 
   // Ingest an array of Signal objects (from fetchSignals / SignalsView).
@@ -2067,18 +2098,21 @@ class TrendDetector {
   // actor username and signal type as light signals too.
   ingestSignals(signals) {
     if (!signals || signals.length === 0) return;
-    this.decay();
-    for (const s of signals) {
-      // Use signal.id as the dedup key (sequence number string).
-      if (!s.id || this._seenPermlinks.has("sig:" + s.id)) continue;
-      this._seenPermlinks.add("sig:" + s.id);
-      for (const word of this._tokenize(s.body || "")) this._addWord(word);
-      // Treat the actor's username as a lightweight trending term so prolific
-      // interactors surface in the trends (useful on the Signals page).
-      if (s.actor && s.actor.length >= this._minLen) {
-        this._addWord(s.actor.toLowerCase());
+    this._runOrQueue(() => {
+      this.decay();
+      for (const s of signals) {
+        // Use signal.id as the dedup key (sequence number string).
+        if (!s.id || this._seenPermlinks.has("sig:" + s.id)) continue;
+        this._seenPermlinks.add("sig:" + s.id);
+        for (const word of this._tokenize(s.body || "")) this._addWord(word);
+        // Treat the actor's username as a lightweight trending term so prolific
+        // interactors surface in the trends (useful on the Signals page).
+        if (s.actor && s.actor.length >= this._minLen) {
+          this._addWord(s.actor.toLowerCase());
+        }
       }
-    }
+      this._schedulePersist();
+    });
   }
 
   // ── Output ────────────────────────────────────────────────────────────────
@@ -2087,8 +2121,10 @@ class TrendDetector {
   // Only words with a non-trivial recent score are included (recent > 0.01)
   // to avoid surfacing long-dead terms that still have count > 0.
   getTrends(topN = 10) {
+    const now = Date.now();
     const results = [];
     for (const [word, data] of this._words.entries()) {
+      this._decayToNow(data, now);
       if (data.recent < 0.01) continue;
       const score = data.recent / (data.count + 1);
       results.push({ word, score, count: data.count, recent: data.recent });
@@ -2102,5 +2138,121 @@ class TrendDetector {
   reset() {
     this._words.clear();
     this._seenPermlinks.clear();
+    this._runOrQueue(() => this._clearPersistentWords());
+  }
+
+  // ── IndexedDB persistence ────────────────────────────────────────────────
+
+  _runOrQueue(fn) {
+    if (this._ready) {
+      fn();
+      return;
+    }
+    this._pendingOps.push(fn);
+  }
+
+  async _initPersistence() {
+    if (typeof indexedDB === "undefined") {
+      this._ready = true;
+      return;
+    }
+    try {
+      this._idb = await this._openTrendDB();
+      await this._loadPersistentWords();
+    } catch (e) {
+      console.warn("[SteemTwist trends] IndexedDB unavailable, running in-memory only.", e);
+      this._idb = null;
+    } finally {
+      this._ready = true;
+      const queued = this._pendingOps.splice(0);
+      for (const op of queued) op();
+    }
+  }
+
+  _openTrendDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(TREND_DB_NAME, TREND_DB_VERSION);
+      req.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(TREND_DB_STORE)) {
+          db.createObjectStore(TREND_DB_STORE, { keyPath: "word" });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _store(mode = "readonly") {
+    if (!this._idb) return null;
+    return this._idb.transaction(TREND_DB_STORE, mode).objectStore(TREND_DB_STORE);
+  }
+
+  _requestToPromise(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async _loadPersistentWords() {
+    const store = this._store("readonly");
+    if (!store) return;
+    const rows = await this._requestToPromise(store.getAll());
+    const now = Date.now();
+    for (const row of rows || []) {
+      if (!row || typeof row.word !== "string") continue;
+      const data = {
+        count: Number(row.count) || 0,
+        recent: Number(row.recent) || 0,
+        lastUpdated: typeof row.lastUpdated === "number" ? row.lastUpdated : now
+      };
+      this._decayToNow(data, now);
+      if (data.count <= 0 || data.recent < 0.01) continue;
+      this._words.set(row.word, data);
+    }
+  }
+
+  _schedulePersist() {
+    if (!this._idb || this._persistTimer) return;
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._persistAllWords();
+    }, 300);
+  }
+
+  async _persistAllWords() {
+    const store = this._store("readwrite");
+    if (!store) return;
+    const now = Date.now();
+    const ranked = [];
+    for (const [word, data] of this._words.entries()) {
+      this._decayToNow(data, now);
+      if (data.recent < 0.005 && data.count < 2) continue;
+      ranked.push({ word, data });
+    }
+    ranked.sort((a, b) => (b.data.recent - a.data.recent) || (b.data.count - a.data.count));
+    const keep = ranked.slice(0, TREND_DB_MAX_WORDS);
+    const keepSet = new Set(keep.map(item => item.word));
+    for (const item of keep) {
+      store.put({
+        word: item.word,
+        count: item.data.count,
+        recent: item.data.recent,
+        lastUpdated: item.data.lastUpdated
+      });
+    }
+    for (const word of this._words.keys()) {
+      if (!keepSet.has(word)) {
+        store.delete(word);
+        this._words.delete(word);
+      }
+    }
+  }
+
+  async _clearPersistentWords() {
+    const store = this._store("readwrite");
+    if (!store) return;
+    await this._requestToPromise(store.clear());
   }
 }
