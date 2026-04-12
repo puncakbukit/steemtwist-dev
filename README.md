@@ -100,15 +100,17 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 
 ## Trending Detection 🔥
 
-SteemTwist includes a **client-side streaming trend detector** that runs entirely in the browser against whatever content is currently loaded — no external API, no server-side index. It answers the question *"what is being talked about right now, on this page, in this moment?"*
+SteemTwist includes a **client-side streaming trend detector** that runs entirely in the browser against whatever content is currently loaded — no external API, no server-side index.
+
+It answers the question *"what is being talked about right now, on this page, in this moment?"* while also maintaining continuity across sessions using local persistence.
 
 ### How it works
 
 For every word that appears in the loaded posts or signals, the detector maintains two counters:
 
-| Counter | Meaning |
-|---|---|
-| `count` | Lifetime occurrences — the word's historical baseline |
+| Counter  | Meaning                                                            |
+| -------- | ------------------------------------------------------------------ |
+| `count`  | Lifetime occurrences — the word's historical baseline              |
 | `recent` | Time-decayed occurrences — how much the word has appeared *lately* |
 
 The **trend score** is:
@@ -117,75 +119,118 @@ The **trend score** is:
 score = recent / (count + 1)
 ```
 
-This ratio is high when a word is appearing frequently right now but is not yet overwhelmingly common historically — exactly the shape of a genuine trend. A word that has always been frequent scores low regardless of volume; a brand-new word that bursts suddenly scores high.
+This ratio is high when a word is appearing frequently right now but is not yet overwhelmingly common historically — exactly the shape of a genuine trend.
+
+A word that has always been frequent scores low regardless of volume; a brand-new word that bursts suddenly scores high.
 
 ### Time decay
 
-`recent` is multiplied by a **decay factor of 0.85** on each decay tick, so older occurrences fade automatically without any explicit expiry logic:
+`recent` is multiplied by a **decay factor of 0.99** on each decay time unit:
 
 ```
-recent = recent × 0.85
+recent = recent × 0.99
 ```
 
-Decay is applied in two ways depending on the data source:
+This ensures older occurrences naturally fade without explicit expiry logic.
 
-- **Batch loads** (initial feed, older months/pages): one decay tick is applied per batch before ingesting, so loading a large historical archive does not artificially inflate recent scores.
-- **Firehose** (live stream, Home and Explore only): a repeating timer fires every **8 seconds** while the Firehose is active. This continuously drains words that stop appearing, ensuring the trending list stays current even when no new posts arrive.
+Decay is applied in two ways:
+
+* **Batch loads**: one decay tick per batch before ingesting historical data
+* **Firehose (live stream)**: a repeating **8-second timer** continuously decays inactive words
+
+### IndexedDB Persistence 🧠
+
+The detector uses **IndexedDB (`SteemTwistTrendDB`)** to persist its internal state across sessions.
+
+* **Role:** Stores word frequencies so trends survive browser close/reopen
+* **Continuity:** Timestamps allow the system to apply *offline decay*, ensuring trends naturally cool down even when the app is not running
+* **Effect:**
+
+  * Common words remain low-scored due to long-term history
+  * New bursty topics spike immediately after reopening
+
+Unlike a pure in-memory model, this gives SteemTwist a **long-term memory of language patterns**, improving trend quality over time.
+
+### Write-Behind Performance ⚡
+
+To avoid UI lag during high-volume Firehose streams:
+
+* Updates are **batched**
+* Writes to IndexedDB are delayed using a **300 ms debounce**
+
+This ensures smooth scrolling and real-time updates without blocking the main thread.
+
+### Memory Safety 🛡️
+
+To prevent uncontrolled growth and browser instability:
+
+* The database is pruned to the **top 8,000 words**
+* Deduplication sets are cleared after **5,000 items**
+
+This keeps memory usage bounded and prevents tab crashes during long sessions.
 
 ### What gets ingested where
 
-| Page | Data source | Ingest method | Firehose decay timer |
-|---|---|---|---|
-| **Explore** | Post bodies | `ingestPosts` on load + each older page; `ingestPost` per live post | ✅ 8-second tick |
-| **Home** | Post bodies from followed Twisters | `ingestPosts` on load + each older month; `ingestPost` per live post | ✅ 8-second tick |
-| **Profile** | Post bodies for the viewed user | `ingestPosts` on load + each older page | — |
-| **Signals** | Signal body text + actor usernames | `ingestSignals` on load + each older page | — |
+| Page        | Data source             | Ingest method                | Firehose decay timer |
+| ----------- | ----------------------- | ---------------------------- | -------------------- |
+| **Explore** | Post bodies             | `ingestPosts` + `ingestPost` | ✅ 8-second tick      |
+| **Home**    | Followed posts          | `ingestPosts` + `ingestPost` | ✅ 8-second tick      |
+| **Profile** | User posts              | `ingestPosts`                | —                    |
+| **Signals** | Signal text + usernames | `ingestSignals`              | —                    |
 
-On the Signals page, actor usernames are weighted as trend terms too — so a user who is generating many signals (e.g. replying actively) will surface in that page's trend list.
+On the Signals page, **actor usernames are also treated as trend terms**, allowing highly active users to surface in trends.
 
-The detector is **reset on every full feed reload** so trends always reflect the currently loaded content, not a stale mix of old and new data.
+### Reset behavior
+
+* The detector is **reset on full feed reload**
+* However, **persistent IndexedDB data is NOT cleared**
+* This ensures:
+
+  * Fresh session context
+  * While still preserving long-term trend memory
 
 ### Noise filtering
 
-Before a word enters the detector it is passed through `_tokenize()`, which:
+Before ingestion, `_tokenize()` cleans the input:
 
-1. Strips the SteemTwist back-link footer (`Posted via [SteemTwist]…`)
-2. Removes HTML tags
-3. Removes URLs (`http://`, `https://`, `www.`)
-4. Removes Markdown image/link syntax
-5. Removes Markdown symbols (`#`, `*`, `_`, `` ` ``, `~`, `>`, `|`, brackets)
-6. Lower-cases and splits on whitespace and hyphens
-7. Drops any token shorter than 3 characters
-8. Filters against `TREND_STOPWORDS` — a set of 100+ English stopwords plus Steem-specific boilerplate terms (`posted`, `via`, `steemtwist`, `steemit`, `steem`, `http`, `https`, `www`, `com`, etc.) and common Markdown/HTML artefacts
+1. Removes SteemTwist footer
+2. Strips HTML
+3. Removes URLs
+4. Removes Markdown syntax
+5. Removes symbols
+6. Lowercases + splits text
+7. Drops tokens < 3 chars
+8. Filters stopwords (100+ common + Steem-specific)
 
 ### Deduplication
 
-Each post permlink is tracked in a `_seenPermlinks` Set so the same post body is never counted twice, even if it appears in multiple batch loads or arrives via both a batch load and the Firehose.
+* `_seenPermlinks` ensures each post is counted once
+* Prevents duplication across batch loads and Firehose
 
 ### Widget
 
-The **Trending Now** widget (`TrendingWidgetComponent`) is embedded at the top of the feed on every page:
+The **Trending Now** widget (`TrendingWidgetComponent`) appears on all pages:
 
-- **Collapsible** — click the header to show/hide; Profile and Signals pages start collapsed by default to keep the feed prominent
-- **Relative bar chart** — 10 bars with widths normalised to the top scorer; colours cycle blue → purple → pink across rank 1–10 using `hsl()` computed values matching the app's brand gradient
-- **Score badge** — each bar shows a 0–100 normalised score; hovering reveals the raw `score`, `recent`, and `count` values in a tooltip
-- **Source label** — the widget header shows the active context, e.g. `Explore · Firehose`, `Home · Understream · Firehose`, `@alice`, `Signals`
-- **Animated transitions** — bar widths animate at 0.4 s ease so the chart visually flows as new content arrives
+* Collapsible UI
+* Top 10 terms with **relative bar chart**
+* Color gradient (blue → purple → pink)
+* Normalized score (0–100)
+* Tooltip with raw values (`score`, `recent`, `count`)
+* Context label (e.g. `Explore · Firehose`)
+* Smooth animations (0.4s ease)
 
 ### `TrendDetector` API (`blockchain.js`)
 
 ```js
 const td = new TrendDetector({ decay: 0.85, minLen: 3 });
 
-td.ingestPosts(posts);          // batch of post objects; applies one decay tick
-td.ingestPost(post);            // single post from Firehose; no decay tick
-td.ingestSignals(signals);      // batch of signal objects; applies one decay tick
-td.decay();                     // standalone decay tick (called by the timer)
-td.getTrends(10);               // → [{ word, score, count, recent }, …] top N
-td.reset();                     // clear all state (call on feed reload)
+td.ingestPosts(posts);
+td.ingestPost(post);
+td.ingestSignals(signals);
+td.decay();
+td.getTrends(10);
+td.reset(); // does NOT clear IndexedDB persistence
 ```
-
----
 
 ## Client-side cache key schema
 
