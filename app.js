@@ -1316,6 +1316,10 @@ const SignalsView = {
   data() {
     return {
       signals:      [],
+      // Reactive snapshot of which signal IDs have been read.
+      // Populated once on created() and updated only when markAllRead() is
+      // called — never re-parsed from localStorage on every render.
+      readIds:      new Set(),
       loading:      true,
       filter:       "all",
       page:         1,
@@ -1326,9 +1330,6 @@ const SignalsView = {
   },
 
   computed: {
-    readIds() {
-      return readSignalIdSet(this.username);
-    },
     // In Twist Stream mode, only show signals for tw- permlinks
     // (or signals with no permlink, like follows).
     // In Understream mode, show all signals.
@@ -1360,6 +1361,8 @@ const SignalsView = {
   },
 
   async created() {
+    // Initialise readIds once from localStorage — no further polling needed.
+    this.readIds = readSignalIdSet(this.username);
     if (!this.username) { this.loading = false; return; }
     try {
       const result = await fetchSignals(this.username);
@@ -1397,6 +1400,9 @@ const SignalsView = {
     markAllRead() {
       const ids = this.signals.map(s => s.id);
       markSignalIdsRead(this.username, ids);
+      // Rebuild the reactive Set so computed properties depending on
+      // readIds update without touching localStorage again.
+      this.readIds = new Set([...this.readIds, ...ids]);
       if (typeof this.refreshUnreadSignals === "function") {
         this.refreshUnreadSignals(this.username);
       }
@@ -2194,6 +2200,11 @@ const App = {
         username.value      = normalizedUser;
         hasKeychain.value   = true;
         localStorage.setItem(STEEM_USER_KEY, normalizedUser);
+        // Reload the Understream preference for this specific account.
+        understreamOn.value = normalizeStoredBool(
+          localStorage.getItem(understreamStorageKey(normalizedUser)),
+          false
+        );
         loginError.value    = "";
         showLoginForm.value = false;
         notify("Logged in as @" + normalizedUser, "success");
@@ -2209,17 +2220,31 @@ const App = {
       localStorage.removeItem(STEEM_USER_KEY);
       notify("Logged out.", "info");
       unreadSignals.value = 0;
+      // Revert to the unscoped (logged-out) Understream preference.
+      understreamOn.value = normalizeStoredBool(
+        localStorage.getItem(understreamStorageKey("")),
+        false
+      );
       loadProfile("");   // reload @steemtwist as fallback
     }
 
-    // Global Understream toggle — persisted in localStorage.
-    // OFF = Twist Stream only (SteemTwist data); ON = full Steem Understream.
+    // Global Understream toggle — persisted in localStorage, scoped per user so
+    // different accounts on the same browser keep independent preferences.
+    // Logged-out state (empty username) uses the legacy unscoped key so the
+    // preference is still remembered before the user signs in.
+    function understreamStorageKey(user) {
+      const u = normalizeAppStorageUsername(user || "");
+      return u ? `steemtwist_understream_${u}` : "steemtwist_understream";
+    }
     const understreamOn = ref(
-      normalizeStoredBool(localStorage.getItem("steemtwist_understream"), false)
+      normalizeStoredBool(
+        localStorage.getItem(understreamStorageKey(username.value)),
+        false
+      )
     );
     function toggleUnderstream() {
       understreamOn.value = !understreamOn.value;
-      localStorage.setItem("steemtwist_understream", String(understreamOn.value));
+      localStorage.setItem(understreamStorageKey(username.value), String(understreamOn.value));
     }
 
     // Unread signal count — recomputed whenever the user navigates to /signals

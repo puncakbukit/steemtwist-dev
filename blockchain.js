@@ -51,7 +51,8 @@ function callWithFallbackAsync(apiCall, args) {
 // Returns null if the account does not exist or the request fails.
 const ACCOUNT_CACHE_TTL = 90 * 1000; // 90 seconds
 const ACCOUNT_CACHE_MAX = 500;
-const accountCache = new Map(); // username -> { ts, value }
+const accountCache    = new Map(); // username -> { ts, value }
+const accountInFlight = new Map(); // username -> Promise — deduplicates concurrent fetches
 const BLOCKCHAIN_CACHE_DEBUG = !!(typeof window !== "undefined" && window.STEEMTWIST_CACHE_DEBUG);
 
 function blockchainCacheDebugLog(...args) {
@@ -77,16 +78,28 @@ function setAccountCached(key, value) {
 }
 
 function fetchAccount(username) {
-  return new Promise(resolve => {
-    if (!username) return resolve(null);
-    const key = normalizeBlockchainStorageUsername(username) || String(username).toLowerCase();
-    const cached = accountCache.get(key);
-    if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
-      const v = cached.value;
-      // Return a copy so callers don't accidentally mutate cache.
-      return resolve(v && typeof v === "object" ? { ...v } : v);
-    }
+  if (!username) return Promise.resolve(null);
+  const key = normalizeBlockchainStorageUsername(username) || String(username).toLowerCase();
 
+  // 1. Hot-path: valid cache hit — return a copy immediately.
+  const cached = accountCache.get(key);
+  if (cached && (Date.now() - cached.ts) < ACCOUNT_CACHE_TTL) {
+    const v = cached.value;
+    // Return a copy so callers don't accidentally mutate cache.
+    return Promise.resolve(v && typeof v === "object" ? { ...v } : v);
+  }
+
+  // 2. In-flight dedup: if another caller is already fetching this account,
+  //    share the same Promise instead of firing a duplicate RPC call.
+  if (accountInFlight.has(key)) {
+    blockchainCacheDebugLog("in-flight hit", key);
+    // Each caller gets its own copy so they can't mutate each other's object.
+    return accountInFlight.get(key).then(v => v && typeof v === "object" ? { ...v } : v);
+  }
+
+  // 3. Cold fetch — create the promise, register it in the in-flight map, and
+  //    remove it when the fetch settles (whether it succeeds or fails).
+  const promise = new Promise(resolve => {
     function setCached(value) {
       return setAccountCached(key, value);
     }
@@ -141,10 +154,18 @@ function fetchAccount(username) {
           created:        account.created || ""
         };
         setCached(normalized);
-        resolve({ ...normalized });
+        resolve(normalized); // in-flight consumers each get their own copy below
       });
     });
+  }).finally(() => {
+    // Always remove from in-flight map once settled so stale entries never linger.
+    accountInFlight.delete(key);
+    blockchainCacheDebugLog("in-flight settled", key);
   });
+
+  accountInFlight.set(key, promise);
+  // The originating caller also gets its own copy of the resolved value.
+  return promise.then(v => v && typeof v === "object" ? { ...v } : v);
 }
 
 // ---- Post / comment helpers ----
@@ -1286,11 +1307,13 @@ function fetchPinnedTwist(username) {
       if (cached.author === null) {
         // cached unpin — chain may still show old pin
         found = null;
+        // Chain has caught up with the unpin when it no longer returns a pin.
+        if (chainResult === null) clearPinCache(username);
       } else if (!chainResult || chainResult.permlink !== cached.permlink) {
         // cached pin not yet on chain — use cache
         found = { author: cached.author, permlink: cached.permlink };
       } else {
-        // chain has caught up — safe to clear cache
+        // chain has caught up with the pin — safe to clear cache
         clearPinCache(username);
       }
     }
