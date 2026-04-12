@@ -62,6 +62,7 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 - 🏠 **Home** — personalised stream of twists from Twisters you follow; Understream and Firehose supported
 - 🔭 **Explore** — global Twist Stream; sort New / Hot / Top; Firehose real-time stream; Understream toggle
 - 🌊 **Understream** — toggle between Twist Stream and full Steem data on Home, Explore, Profile, and Signals
+- 🔥 **Trending Now** — probabilistic real-time trend detector surfacing the top 10 words across all loaded content; present on every page (see [Trending Detection](#trending-detection-) below)
 
 ### Twists
 - 📝 **Post twists** up to 280 characters (**media excluded**) with **markdown** and real-time **Write / Preview** tab
@@ -95,6 +96,97 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 - 🔔 **Signals** — Twist Love, Replies, Mentions, Follows, Retwists, Secret Twists; All / Unread tabs
 - 🔒 **Secret Twists** — end-to-end encrypted; unlimited length; nested encrypted replies; markdown; Write / Preview; only recipient can reply
 
+---
+
+## Trending Detection 🔥
+
+SteemTwist includes a **client-side streaming trend detector** that runs entirely in the browser against whatever content is currently loaded — no external API, no server-side index. It answers the question *"what is being talked about right now, on this page, in this moment?"*
+
+### How it works
+
+For every word that appears in the loaded posts or signals, the detector maintains two counters:
+
+| Counter | Meaning |
+|---|---|
+| `count` | Lifetime occurrences — the word's historical baseline |
+| `recent` | Time-decayed occurrences — how much the word has appeared *lately* |
+
+The **trend score** is:
+
+```
+score = recent / (count + 1)
+```
+
+This ratio is high when a word is appearing frequently right now but is not yet overwhelmingly common historically — exactly the shape of a genuine trend. A word that has always been frequent scores low regardless of volume; a brand-new word that bursts suddenly scores high.
+
+### Time decay
+
+`recent` is multiplied by a **decay factor of 0.85** on each decay tick, so older occurrences fade automatically without any explicit expiry logic:
+
+```
+recent = recent × 0.85
+```
+
+Decay is applied in two ways depending on the data source:
+
+- **Batch loads** (initial feed, older months/pages): one decay tick is applied per batch before ingesting, so loading a large historical archive does not artificially inflate recent scores.
+- **Firehose** (live stream, Home and Explore only): a repeating timer fires every **8 seconds** while the Firehose is active. This continuously drains words that stop appearing, ensuring the trending list stays current even when no new posts arrive.
+
+### What gets ingested where
+
+| Page | Data source | Ingest method | Firehose decay timer |
+|---|---|---|---|
+| **Explore** | Post bodies | `ingestPosts` on load + each older page; `ingestPost` per live post | ✅ 8-second tick |
+| **Home** | Post bodies from followed Twisters | `ingestPosts` on load + each older month; `ingestPost` per live post | ✅ 8-second tick |
+| **Profile** | Post bodies for the viewed user | `ingestPosts` on load + each older page | — |
+| **Signals** | Signal body text + actor usernames | `ingestSignals` on load + each older page | — |
+
+On the Signals page, actor usernames are weighted as trend terms too — so a user who is generating many signals (e.g. replying actively) will surface in that page's trend list.
+
+The detector is **reset on every full feed reload** so trends always reflect the currently loaded content, not a stale mix of old and new data.
+
+### Noise filtering
+
+Before a word enters the detector it is passed through `_tokenize()`, which:
+
+1. Strips the SteemTwist back-link footer (`Posted via [SteemTwist]…`)
+2. Removes HTML tags
+3. Removes URLs (`http://`, `https://`, `www.`)
+4. Removes Markdown image/link syntax
+5. Removes Markdown symbols (`#`, `*`, `_`, `` ` ``, `~`, `>`, `|`, brackets)
+6. Lower-cases and splits on whitespace and hyphens
+7. Drops any token shorter than 3 characters
+8. Filters against `TREND_STOPWORDS` — a set of 100+ English stopwords plus Steem-specific boilerplate terms (`posted`, `via`, `steemtwist`, `steemit`, `steem`, `http`, `https`, `www`, `com`, etc.) and common Markdown/HTML artefacts
+
+### Deduplication
+
+Each post permlink is tracked in a `_seenPermlinks` Set so the same post body is never counted twice, even if it appears in multiple batch loads or arrives via both a batch load and the Firehose.
+
+### Widget
+
+The **Trending Now** widget (`TrendingWidgetComponent`) is embedded at the top of the feed on every page:
+
+- **Collapsible** — click the header to show/hide; Profile and Signals pages start collapsed by default to keep the feed prominent
+- **Relative bar chart** — 10 bars with widths normalised to the top scorer; colours cycle blue → purple → pink across rank 1–10 using `hsl()` computed values matching the app's brand gradient
+- **Score badge** — each bar shows a 0–100 normalised score; hovering reveals the raw `score`, `recent`, and `count` values in a tooltip
+- **Source label** — the widget header shows the active context, e.g. `Explore · Firehose`, `Home · Understream · Firehose`, `@alice`, `Signals`
+- **Animated transitions** — bar widths animate at 0.4 s ease so the chart visually flows as new content arrives
+
+### `TrendDetector` API (`blockchain.js`)
+
+```js
+const td = new TrendDetector({ decay: 0.85, minLen: 3 });
+
+td.ingestPosts(posts);          // batch of post objects; applies one decay tick
+td.ingestPost(post);            // single post from Firehose; no decay tick
+td.ingestSignals(signals);      // batch of signal objects; applies one decay tick
+td.decay();                     // standalone decay tick (called by the timer)
+td.getTrends(10);               // → [{ word, score, count, recent }, …] top N
+td.reset();                     // clear all state (call on feed reload)
+```
+
+---
+
 ## Client-side cache key schema
 
 SteemTwist uses browser `localStorage` for lightweight client cache/state. Username-scoped keys use a normalized username (`trim` + lowercase + `[a-z0-9-.]` only) to avoid duplicate logical keys.
@@ -102,11 +194,14 @@ SteemTwist uses browser `localStorage` for lightweight client cache/state. Usern
 | Key pattern | Purpose | TTL / lifecycle |
 |---|---|---|
 | `steem_user` | Last logged-in username used by the app | Persisted until logout |
-| `steemtwist_understream` | Global Understream ON/OFF preference | Persisted until changed |
+| `steemtwist_understream_<username>` | Per-user Understream ON/OFF preference | Persisted until changed |
+| `steemtwist_understream` | Understream preference for the logged-out state (legacy fallback) | Persisted until changed |
 | `steemtwist_signals_read_<username>` | Signals read markers (`{ v, items: [{ id, ts }] }`) | 180-day TTL per item, capped to 2000 IDs |
 | `steemtwist_pending_pin_<username>` | Pending pin/unpin optimistic cache (`{ author, permlink, ts }`) | 5-minute TTL |
 | `st_draft_<username>_<draftKey>` | Draft cache for composers/replies/edits | 30-day TTL, periodic GC |
 | `st_draft_<draftKey>` | Legacy unscoped draft key (migrated on read) | Migrated to scoped key, then removed |
+
+**Note:** The Understream preference is now scoped per user so that different accounts on the same browser keep independent preferences. The unscoped `steemtwist_understream` key is still read/written for the logged-out state. On login the app reads the scoped key for the newly signed-in account; on logout it reverts to the unscoped key.
 
 Debugging cache behavior can be enabled with:
 
@@ -305,6 +400,8 @@ Steem Keychain's `requestBroadcast` rejects `vote` operations bundled with other
 | **Profile** | `fetchTwistsByUser` (all historical `tw-` posts, paged) | `fetchPostsByUser` (full blog) |
 | **Signals** | Only `tw-` permlinks (+ follows) | All Steem account history |
 
+The Understream preference is stored **per user** in `localStorage` so that different accounts on the same browser are independent. The preference is re-read from the correct key on login and reverts to the unscoped fallback on logout.
+
 ---
 
 ## Secret Twists 🔒
@@ -348,8 +445,8 @@ Recipient sees 🔒 signal → requestVerifyKey (Keychain) → message revealed
 ```
 steemtwist/
 ├── index.html       # HTML shell — CDN scripts with SRI hashes, CSS tokens, app mount
-├── blockchain.js    # Steem API and Keychain helpers (no Vue)
-├── components.js    # Vue 3 components
+├── blockchain.js    # Steem API, Keychain helpers, TrendDetector class (no Vue)
+├── components.js    # Vue 3 components, including TrendingWidgetComponent
 └── app.js           # Views, router, root App
 ```
 
@@ -364,6 +461,7 @@ steemtwist/
 - `fetchAccount(username)` → `{ username, profileImage, displayName, about, coverImage, location, website, reputation, postCount, followerCount, followingCount, created }`
   - `profileImage` and `coverImage` are sanitised to `http://` or `https://` URLs only; anything else is returned as `""`
   - `website` is validated to `https://` only in `UserProfileComponent.safeWebsite`
+  - Results are cached in-memory for 90 seconds (`ACCOUNT_CACHE_TTL`), capped to 500 entries. Concurrent calls for the same username share a single in-flight Promise (`accountInFlight` Map) so only one RPC request is dispatched regardless of how many callers are waiting.
 
 ### Posts
 - `fetchPost(author, permlink)` — always returns populated `active_votes`
@@ -378,7 +476,7 @@ steemtwist/
 - `getMonthlyRoot()` → `feed-YYYY-MM` · `getSecretMonthlyRoot()` → `secret-YYYY-MM`
 - `generateTwistPermlink(username)` → `tw-YYYYMMDD-HHMMSS-username`
 - `generateSecretTwistPermlink(username)` → `st-YYYYMMDD-HHMMSS-username`
-- `fetchTwistFeed(monthlyRoot)` — `getContentReplies` + parallel `fetchPost` enrichment
+- `fetchTwistFeed(monthlyRoot)` — `getContentReplies` + parallel `fetchPost` enrichment; automatically includes the previous month during the first 3 days of a new month (rollover grace period)
 - `fetchTwistFeedPage(root)` — one older monthly root page, newest-first
 - `fetchTwistsByUser(username, monthlyRoot, { startFrom, limit, maxScan })` — account-history scan for `tw-` posts with optional cursor paging and scan cap; when `monthlyRoot` is `null`, returns twists across all months
 - `buildZeroPayoutOps(...)` — `[comment, comment_options]` with payouts disabled
@@ -401,7 +499,7 @@ steemtwist/
 - `sortTwists(posts, mode)` — new / hot / top
 - `startFirehose(monthlyRoot, onTwist, onVote, options)` — options: `{ understream, followingSet }`; Understream mode streams root posts instead of monthly-root replies
 - `pinTwist / unpinTwist / fetchPinnedTwist` — on-chain pin via `custom_json`
-- `setPinCache / clearPinCache / getPinCache` — localStorage cache with 5-minute TTL; `getPinCache` validates `author` against `/^[a-z0-9\-.]{3,16}$/` and `permlink` against `/^[a-z0-9-]{1,255}$/` before returning
+- `setPinCache / clearPinCache / getPinCache` — localStorage cache with 5-minute TTL; `getPinCache` validates `author` against `/^[a-z0-9\-.]{3,16}$/` and `permlink` against `/^[a-z0-9-]{1,255}$/` before returning; the pending-unpin entry is cleared automatically once the chain confirms the pin is gone
 
 ### Signals
 - `classifySignalEntry(seqNum, item, username)` → `love | reply | mention | follow | retwist | secret_twist`
@@ -419,6 +517,16 @@ steemtwist/
 - `replySecretTwist(sender, recipient, message, parentAuthor, parentPermlink, callback)`
 - `decryptSecretTwist(recipient, sender, encodedPayload, callback)` — `requestVerifyKey("Memo")`
 - `fetchSecretTwists(username)` — `getContentReplies` on secret root, filtered to `meta.type === "secret_twist"`
+
+### Trend Detector
+- `TREND_STOPWORDS` — `Set<string>` of 100+ English stopwords and Steem/Markdown boilerplate terms excluded from trend analysis
+- `TrendDetector({ decay, minLen })` — class; `decay` defaults to `0.85`, `minLen` to `3`
+  - `ingestPosts(posts[])` — tokenise each post body; apply one decay tick for the batch
+  - `ingestPost(post)` — tokenise a single post (Firehose); no decay tick
+  - `ingestSignals(signals[])` — tokenise signal bodies + actor usernames; apply one decay tick
+  - `decay()` — multiply every word's `recent` counter by the decay factor
+  - `getTrends(n)` → `[{ word, score, count, recent }]` — top N by score, excluding words with `recent < 0.01`
+  - `reset()` — clear all word counters and the seen-permlinks dedup Set
 
 ---
 
@@ -442,6 +550,7 @@ steemtwist/
 | `TwistCardComponent` | Full twist card: action bar (Love, Retwist, Replies, **Flag** for Live Twists); body; Edit; Delete; inline flag panel with reason selector |
 | `LiveTwistComposerComponent` | Live Twist editor: Card label, Body, Code textarea, ▶ Preview sandbox (`ref="previewSandbox"`), auto-resizing preview iframe, Templates gallery (Simple / Greetings / Queries / Actions), Publish ⚡ |
 | `TwistComposerComponent` | 🌀 Twist / ⚡ Live Twist tabs; Write/Preview on twist pane |
+| `TrendingWidgetComponent` | 🔥 Collapsible trend bar chart: 10 bars normalised to top scorer, blue→purple→pink gradient per rank, score badge with hover tooltip, source label; `startCollapsed` prop for Profile/Signals pages |
 | `SignalItemComponent` | Signal row: icon, label, preview, timestamp, View link |
 | `UserRowComponent` | Twister row with optional Follow/Unfollow button |
 | `SecretTwistComposerComponent` | Secret Twist composer: recipient, unlimited textarea, Write/Preview, Send 🔒 |
@@ -455,14 +564,14 @@ steemtwist/
 
 | Route | View | Description |
 |---|---|---|
-| `/` | `HomeView` | Personalised feed — followed Twisters; Understream; Firehose |
-| `/explore` | `ExploreView` | Global Twist Stream; Firehose; Understream; sort tabs; composer |
-| `/signals` | `SignalsView` | Signals feed; All / Unread |
+| `/` | `HomeView` | Personalised feed — followed Twisters; Understream; Firehose; Trending widget |
+| `/explore` | `ExploreView` | Global Twist Stream; Firehose; Understream; sort tabs; composer; Trending widget |
+| `/signals` | `SignalsView` | Signals feed; All / Unread; Trending widget (collapsed by default) |
 | `/secret-twists` | `SecretTwistView` | Inbox / Sent / Compose |
 | `/about` | `AboutView` | README via marked.js |
 | `/@:user/social` | `SocialView` | Paginated Followers / Following / Friends; Follow buttons |
 | `/@:user/:permlink` | `TwistView` | Single twist; parent context |
-| `/@:user` | `ProfileView` | Profile card; twist list |
+| `/@:user` | `ProfileView` | Profile card; twist list; Trending widget (collapsed by default) |
 
 ### Global provided state
 
@@ -473,12 +582,27 @@ steemtwist/
 | `notify` | `function(msg, type)` | type: `"error"` \| `"success"` \| `"info"` |
 | `unreadSignals` | `ref<number>` | Recomputed on nav to Signals |
 | `refreshUnreadSignals` | `function(user)` | Called on login and nav |
-| `understreamOn` | `ref<boolean>` | Persisted in `localStorage` |
-| `toggleUnderstream` | `function()` | Flips and persists `understreamOn` |
+| `understreamOn` | `ref<boolean>` | Persisted per-user in `localStorage`; re-read on login/logout |
+| `toggleUnderstream` | `function()` | Flips and persists `understreamOn` to the current user's scoped key |
 
 The following are also provided globally and injected by `LiveTwistComponent` and `LiveTwistComposerComponent` so that blockchain actions work correctly in both the live viewer and the composer preview:
 
 `voteTwist`, `postTwistReply`, `retwistPost`, `followUser`, `unfollowUser`
+
+### Trend detection per view
+
+Each feed view owns a private `TrendDetector` instance (`_trendDetector`) created in `created()` and kept non-reactive (prefixed `_`) to avoid Vue observation overhead on the internal Maps. The reactive output is a plain `trends` array updated by calling `_refreshTrends()` after every ingest or decay tick.
+
+| View | `_trendDetector` lifecycle | Decay timer |
+|---|---|---|
+| `ExploreView` | Created in `created()`; `reset()` on `loadFeed()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
+| `HomeView` | Created in `created()`; `reset()` on `loadFeed()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
+| `ProfileView` | Created in `created()`; `reset()` on `loadProfile()` | None |
+| `SignalsView` | Created in `created()` | None |
+
+### Signals read state
+
+`SignalsView` stores the set of read signal IDs as a reactive `data` field (`readIds: new Set()`) rather than recomputing it from `localStorage` on every render. It is initialised once in `created()` via `readSignalIdSet(username)` and rebuilt (new Set reference) whenever `markAllRead()` is called, triggering Vue's change detection without touching `localStorage` again.
 
 ---
 
@@ -503,6 +627,7 @@ All CDN scripts (`steem-js`, `vue`, `vue-router`, `marked`, `DOMPurify`) load wi
 
 ### localStorage
 - The pending-pin cache (`getPinCache`) validates `author` against `/^[a-z0-9\-.]{3,16}$/` and `permlink` against `/^[a-z0-9-]{1,255}$/` before use. Tampered or injected cache values are silently discarded.
+- The pending-unpin cache entry (`author: null`) is cleared automatically once `fetchPinnedTwist` confirms that the chain no longer shows a pin, so it does not linger for the full TTL.
 
 ### Signals
 - `stripSignalBody` caps its input to 10 000 characters before applying regex patterns, preventing potential ReDoS from crafted post bodies with deeply nested or unclosed HTML tags.
