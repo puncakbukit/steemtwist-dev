@@ -2463,14 +2463,14 @@ class TrendDetector {
       }
     }
 
-    // Shape output — pick the highest-scoring word as the cluster label
+    // Shape output — label is the top 3 (or fewer) highest-scoring member words
     return topics
       .map(topic => {
         const sorted = topic.words
           .slice()
           .sort((a, b) => b.score - a.score);
         return {
-          label:  sorted[0].word,
+          label:  sorted.slice(0, 3).map(w => w.word).join(" · "),
           words:  sorted.map(w => w.word),
           score:  topic.score,
           topN:   sorted.slice(0, 5).map(w => ({ word: w.word, score: w.score })),
