@@ -1970,7 +1970,7 @@ class TrendDetector {
   // decay   — multiplier applied to `recent` on each decay tick (0–1).
   //           0.85 means a word loses ~15 % of its recent weight per tick.
   // minLen  — minimum word length to track (filters single-letter noise).
-  constructor({ decay = 0.95, minLen = 3 } = {}) {
+  constructor({ decay = 0.99, minLen = 3 } = {}) {
     this._words  = new Map(); // word -> { count, recent, lastUpdated }
     this._decay  = decay;
     this._minLen = minLen;
