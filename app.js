@@ -208,13 +208,14 @@ const ExploreView = {
   },
 
   async created() {
-    this._trendDetector = new TrendDetector();
+    this._trendDetector = new TrendDetector({ context: "explore" });
     await this.loadFeed(true);
   },
 
   unmounted() {
     this.stopFirehose();
     this._stopDecayTimer();
+    if (this._trendDetector) this._trendDetector.destroy();
   },
 
   methods: {
@@ -636,13 +637,14 @@ const HomeView = {
   },
 
   async created() {
-    this._trendDetector = new TrendDetector();
+    this._trendDetector = new TrendDetector({ context: "home" });
     await this.loadFeed();
   },
 
   unmounted() {
     this.stopFirehose();
     this._stopDecayTimer();
+    if (this._trendDetector) this._trendDetector.destroy();
   },
 
   watch: {
@@ -1022,8 +1024,17 @@ const ProfileView = {
   },
 
   async created() {
-    this._trendDetector = new TrendDetector();
+    // Context is keyed to the viewed user so each profile accumulates its own
+    // independent trending baseline. The context is updated in loadProfile()
+    // when navigating between profiles without unmounting (route watcher).
+    this._trendDetector = new TrendDetector({
+      context: "profile:" + (this.$route.params.user || "unknown")
+    });
     await this.loadProfile();
+  },
+
+  unmounted() {
+    if (this._trendDetector) this._trendDetector.destroy();
   },
 
   computed: {
@@ -1062,7 +1073,17 @@ const ProfileView = {
       this.page     = 1;
       this.userTwists  = [];
       this.profileData = null;
-      this._trendDetector.reset();
+
+      // When navigating to a different profile, swap the detector so the new
+      // context gets its own IDB namespace and accumulated baseline.
+      const newContext = "profile:" + (user || "unknown");
+      if (!this._trendDetector || this._trendDetector._context !== newContext) {
+        if (this._trendDetector) this._trendDetector.destroy();
+        this._trendDetector = new TrendDetector({ context: newContext });
+      } else {
+        this._trendDetector.reset();
+      }
+
       if (refreshPin) this.pinnedTwist = null;
       try {
         const pinPromise = refreshPin
@@ -1467,8 +1488,12 @@ const SignalsView = {
     understreamOn() { this.page = 1; }
   },
 
+  unmounted() {
+    if (this._trendDetector) this._trendDetector.destroy();
+  },
+
   async created() {
-    this._trendDetector = new TrendDetector();
+    this._trendDetector = new TrendDetector({ context: "signals" });
     // Initialise readIds once from localStorage — no further polling needed.
     this.readIds = readSignalIdSet(this.username);
     if (!this.username) { this.loading = false; return; }

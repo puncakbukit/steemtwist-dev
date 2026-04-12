@@ -102,7 +102,7 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 
 SteemTwist includes a **client-side streaming trend detector** that runs entirely in the browser against whatever content is currently loaded — no external API, no server-side index.
 
-It answers the question *"what is being talked about right now, on this page, in this moment?"* while also maintaining continuity across sessions using local persistence.
+It answers the question *"what is being talked about right now, on this page, in this moment?"* while also accumulating a long-term per-view baseline that survives browser reloads.
 
 ### How it works
 
@@ -125,38 +125,42 @@ A word that has always been frequent scores low regardless of volume; a brand-ne
 
 ### Time decay
 
-`recent` is multiplied by a **decay factor of 0.99** on each decay time unit:
+`recent` is multiplied by a **decay factor of 0.99** per elapsed second:
 
 ```
-recent = recent × 0.99
+recent = recent × (0.99 ^ elapsedSeconds)
 ```
 
-This ensures older occurrences naturally fade without explicit expiry logic.
+Decay is time-stamped, so words that aged while the browser was closed are correctly cooled down the moment the app reopens — no explicit timer needed for offline periods.
 
-Decay is applied in two ways:
+Decay is triggered in two ways:
 
-* **Batch loads**: one decay tick per batch before ingesting historical data
+* **Batch loads**: one decay pass before ingesting each batch of historical posts
 * **Firehose (live stream)**: a repeating **8-second timer** continuously decays inactive words
 
-### IndexedDB Persistence 🧠
+### Per-context IndexedDB Persistence 🧠
 
-The detector uses **IndexedDB (`SteemTwistTrendDB`)** to persist its internal state across sessions.
+Each view owns its own **isolated namespace** inside `SteemTwistTrendDB`. Words are stored with a compound key `[context, word]` so one view's baseline never bleeds into another's.
 
-* **Role:** Stores word frequencies so trends survive browser close/reopen
-* **Continuity:** Timestamps allow the system to apply *offline decay*, ensuring trends naturally cool down even when the app is not running
-* **Effect:**
+| View | IDB context key |
+|---|---|
+| Explore | `"explore"` |
+| Home | `"home"` |
+| Profile (@alice) | `"profile:alice"` |
+| Signals | `"signals"` |
 
-  * Common words remain low-scored due to long-term history
-  * New bursty topics spike immediately after reopening
+**Why per-context?** A burst of Firehose traffic on Explore should not inflate the trending words shown on @alice's profile page, and vice-versa. Each view accumulates its own long-term memory of language patterns, making trends more accurate the more you use that view.
 
-Unlike a pure in-memory model, this gives SteemTwist a **long-term memory of language patterns**, improving trend quality over time.
+**Survival across reloads:** On construction, the detector loads its context's rows from IDB and applies offline decay before ingestion begins. Common words retain their suppressed score; fresh bursty words spike as soon as they appear.
+
+**Profile navigation:** When navigating from one profile to another without unmounting the component, the detector is swapped to a new instance with the new profile's context key. The old context's IDB data is left intact for the next visit.
 
 ### Write-Behind Performance ⚡
 
 To avoid UI lag during high-volume Firehose streams:
 
-* Updates are **batched**
 * Writes to IndexedDB are delayed using a **300 ms debounce**
+* All puts and deletes for one flush share a single IDB transaction
 
 This ensures smooth scrolling and real-time updates without blocking the main thread.
 
@@ -164,30 +168,25 @@ This ensures smooth scrolling and real-time updates without blocking the main th
 
 To prevent uncontrolled growth and browser instability:
 
-* The database is pruned to the **top 8,000 words**
-* Deduplication sets are cleared after **5,000 items**
-
-This keeps memory usage bounded and prevents tab crashes during long sessions.
+* Each context's IDB store is pruned to the **top 8,000 words** per flush (ranked by `recent` then `count`)
+* Deduplication sets are evicted after **5,000 items**
 
 ### What gets ingested where
 
-| Page        | Data source             | Ingest method                | Firehose decay timer |
-| ----------- | ----------------------- | ---------------------------- | -------------------- |
-| **Explore** | Post bodies             | `ingestPosts` + `ingestPost` | ✅ 8-second tick      |
-| **Home**    | Followed posts          | `ingestPosts` + `ingestPost` | ✅ 8-second tick      |
-| **Profile** | User posts              | `ingestPosts`                | —                    |
-| **Signals** | Signal text + usernames | `ingestSignals`              | —                    |
+| Page | IDB context | Data source | Ingest method | Firehose decay timer |
+|---|---|---|---|---|
+| **Explore** | `"explore"` | Post bodies | `ingestPosts` + `ingestPost` | ✅ 8-second tick |
+| **Home** | `"home"` | Followed posts | `ingestPosts` + `ingestPost` | ✅ 8-second tick |
+| **Profile** | `"profile:<user>"` | User posts | `ingestPosts` | — |
+| **Signals** | `"signals"` | Signal text + usernames | `ingestSignals` | — |
 
 On the Signals page, **actor usernames are also treated as trend terms**, allowing highly active users to surface in trends.
 
 ### Reset behavior
 
-* The detector is **reset on full feed reload**
-* However, **persistent IndexedDB data is NOT cleared**
-* This ensures:
+`reset()` clears only the **in-memory** word map and deduplication set. The IDB baseline for the current context is intentionally preserved so the long-term signal accumulates across sessions.
 
-  * Fresh session context
-  * While still preserving long-term trend memory
+`reset()` is called only when the same context reloads its feed (e.g. pull-to-refresh on Home). When the context identity changes (navigating to a different profile), the detector instance is replaced entirely rather than reset.
 
 ### Noise filtering
 
@@ -222,15 +221,26 @@ The **Trending Now** widget (`TrendingWidgetComponent`) appears on all pages:
 ### `TrendDetector` API (`blockchain.js`)
 
 ```js
-const td = new TrendDetector({ decay: 0.85, minLen: 3 });
+// context identifies the view — words are stored in an isolated IDB namespace
+const td = new TrendDetector({ context: "profile:alice", decay: 0.99, minLen: 3 });
 
-td.ingestPosts(posts);
-td.ingestPost(post);
-td.ingestSignals(signals);
-td.decay();
-td.getTrends(10);
-td.reset(); // does NOT clear IndexedDB persistence
+td.ingestPosts(posts);      // batch ingest; applies decay first
+td.ingestPost(post);        // single live post (Firehose)
+td.ingestSignals(signals);  // signals feed; also ingests actor usernames
+td.decay();                 // manual decay tick (used by Firehose timer)
+td.getTrends(10);           // → [{ word, score, count, recent }, …]
+td.reset();                 // clears in-memory state; IDB baseline preserved
+td.destroy();               // cancel pending timer + close IDB connection (call from beforeUnmount)
 ```
+
+### IndexedDB schema (`SteemTwistTrendDB`)
+
+| Version | Change |
+|---|---|
+| 1 | Single `words` store with `keyPath: "word"` — global, no context isolation |
+| 2 | `words` store rebuilt with `keyPath: ["context", "word"]` + `byContext` index — per-view isolation |
+
+Existing v1 data is automatically dropped on the first load after upgrading; the detector rebuilds from live ingestion.
 
 ## Client-side cache key schema
 
@@ -638,12 +648,16 @@ The following are also provided globally and injected by `LiveTwistComponent` an
 
 Each feed view owns a private `TrendDetector` instance (`_trendDetector`) created in `created()` and kept non-reactive (prefixed `_`) to avoid Vue observation overhead on the internal Maps. The reactive output is a plain `trends` array updated by calling `_refreshTrends()` after every ingest or decay tick.
 
-| View | `_trendDetector` lifecycle | Decay timer |
-|---|---|---|
-| `ExploreView` | Created in `created()`; `reset()` on `loadFeed()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
-| `HomeView` | Created in `created()`; `reset()` on `loadFeed()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
-| `ProfileView` | Created in `created()`; `reset()` on `loadProfile()` | None |
-| `SignalsView` | Created in `created()` | None |
+Each instance is constructed with a `context` string that namespaces its IndexedDB rows so views never share or overwrite each other's baselines.
+
+| View | IDB context | `_trendDetector` lifecycle | Decay timer |
+|---|---|---|---|
+| `ExploreView` | `"explore"` | Created in `created()`; `reset()` on `loadFeed()`; `destroy()` in `unmounted()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
+| `HomeView` | `"home"` | Created in `created()`; `reset()` on `loadFeed()`; `destroy()` in `unmounted()` | Started in `startFirehose()`; stopped in `stopFirehose()` and `unmounted()` |
+| `ProfileView` | `"profile:<user>"` | Created in `created()`; swapped to new instance when `$route.params.user` changes; `reset()` when same user reloads; `destroy()` in `unmounted()` and on profile swap | None |
+| `SignalsView` | `"signals"` | Created in `created()`; `destroy()` in `unmounted()` | None |
+
+`destroy()` cancels any pending 300 ms persist timer and closes the IDB connection, preventing zombie connections in multi-tab scenarios.
 
 ### Signals read state
 

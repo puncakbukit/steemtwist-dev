@@ -1919,12 +1919,13 @@ function fetchSecretTwists(username, monthsBack = 0) {
 //   • Naturally drops to zero as time passes without new occurrences.
 //
 // Usage:
-//   const td = new TrendDetector();
+//   const td = new TrendDetector({ context: "profile:alice" });
 //   td.ingestPosts(arrayOfPostObjects);   // batch ingest (also decays)
 //   td.ingestSignals(arrayOfSignalObjects);
 //   td.decay();                           // call on a timer for Firehose
 //   const top10 = td.getTrends(10);       // [{ word, score, count, recent }, …]
-//   td.reset();                           // clear all state (e.g. on feed reload)
+//   td.reset();                           // clear in-memory state (IDB baseline kept)
+//   td.destroy();                         // call from beforeUnmount to clean up
 
 // Words excluded from trend detection — common Steem boilerplate,
 // markdown noise, stopwords, and single-character tokens.
@@ -1961,16 +1962,24 @@ const TREND_STOPWORDS = new Set([
   "actually","basically","simply","usually","probably","maybe","really",
 ]);
 
-const TREND_DB_NAME = "SteemTwistTrendDB";
-const TREND_DB_STORE = "words";
-const TREND_DB_VERSION = 1;
-const TREND_DB_MAX_WORDS = 8000;
+const TREND_DB_NAME    = "SteemTwistTrendDB";
+const TREND_DB_STORE   = "words";
+const TREND_DB_INDEX   = "byContext";
+const TREND_DB_VERSION = 2;           // bumped: added compound keyPath + byContext index
+const TREND_DB_MAX_WORDS = 8000;      // per-context cap
 
 class TrendDetector {
-  constructor({ decay = 0.99, minLen = 3 } = {}) {
-    this._words  = new Map();
-    this._decay  = decay;
-    this._minLen = minLen;
+  // context — a stable string identifying the view whose words this instance
+  //   tracks, e.g. "explore", "home", "profile:alice", "signals".
+  //   Words for different contexts are stored in separate namespaces inside
+  //   the shared IndexedDB store so they never bleed into each other, and
+  //   each context accumulates its own long-term historical baseline that
+  //   survives browser reloads.
+  constructor({ decay = 0.99, minLen = 3, context = "default" } = {}) {
+    this._words   = new Map();
+    this._decay   = decay;
+    this._minLen  = minLen;
+    this._context = context;
 
     this._seenPermlinks = new Set();
     this._idb = null;
@@ -2017,12 +2026,18 @@ class TrendDetector {
     return data;
   }
 
+  // Internal: apply decay immediately — call only from within a _runOrQueue closure.
+  _decayNow() {
+    const now = Date.now();
+    for (const data of this._words.values()) {
+      this._decayToNow(data, now);
+    }
+  }
+
+  // Public: safe to call from outside — defers until ready.
   decay() {
     this._runOrQueue(() => {
-      const now = Date.now();
-      for (const data of this._words.values()) {
-        this._decayToNow(data, now);
-      }
+      this._decayNow();
       this._schedulePersist();
     });
   }
@@ -2070,7 +2085,7 @@ class TrendDetector {
   ingestPosts(posts) {
     if (!posts || posts.length === 0) return;
     this._runOrQueue(() => {
-      this.decay();
+      this._decayNow();
       for (const post of posts) {
         this._ingestBody(post.author, post.permlink, post.body);
       }
@@ -2089,7 +2104,7 @@ class TrendDetector {
   ingestSignals(signals) {
     if (!signals || signals.length === 0) return;
     this._runOrQueue(() => {
-      this.decay();
+      this._decayNow();
       for (const s of signals) {
         if (!s.id || this._seenPermlinks.has("sig:" + s.id)) continue;
 
@@ -2127,9 +2142,26 @@ class TrendDetector {
       .slice(0, topN);
   }
 
+  // Clears only the in-memory state so the current session starts a fresh
+  // ingestion pass. The IndexedDB store is intentionally left intact so the
+  // long-term per-context baseline survives (it will be reloaded on the next
+  // TrendDetector construction for this context).
   reset() {
     this._words.clear();
     this._seenPermlinks.clear();
+  }
+
+  // Call from Vue's beforeUnmount to cancel any pending timer and close the
+  // IDB connection cleanly (prevents zombie connections in multi-tab scenarios).
+  destroy() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+    }
+    if (this._idb) {
+      this._idb.close();
+      this._idb = null;
+    }
   }
 
   // ── Persistence ───────────────────────────────────────────────────────────
@@ -2166,14 +2198,28 @@ class TrendDetector {
       const req = indexedDB.open(TREND_DB_NAME, TREND_DB_VERSION);
 
       req.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(TREND_DB_STORE)) {
-          db.createObjectStore(TREND_DB_STORE, { keyPath: "word" });
+        const db        = event.target.result;
+        const oldVersion = event.oldVersion;
+
+        // v1 → v2: drop the old single-keyPath store and create a new one
+        // with a compound keyPath so words are namespaced by context.
+        if (oldVersion < 2) {
+          if (db.objectStoreNames.contains(TREND_DB_STORE)) {
+            db.deleteObjectStore(TREND_DB_STORE);
+          }
+          const store = db.createObjectStore(TREND_DB_STORE, { keyPath: ["context", "word"] });
+          store.createIndex(TREND_DB_INDEX, "context", { unique: false });
         }
       };
 
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = (event) => {
+        const db = event.target.result;
+        // Close gracefully if another tab upgrades the schema.
+        db.onversionchange = () => db.close();
+        resolve(db);
+      };
+      req.onerror  = () => reject(req.error);
+      req.onblocked = () => console.warn("TrendDetector: IDB upgrade blocked by another tab.");
     });
   }
 
@@ -2193,15 +2239,20 @@ class TrendDetector {
     const store = this._store("readonly");
     if (!store) return;
 
-    const rows = await this._requestToPromise(store.getAll());
+    // Load only rows that belong to this context — other views' words are
+    // stored under different context keys and are never touched here.
+    const index = store.index(TREND_DB_INDEX);
+    const rows  = await this._requestToPromise(
+      index.getAll(IDBKeyRange.only(this._context))
+    );
     const now = Date.now();
 
     for (const row of rows || []) {
       if (!row || typeof row.word !== "string") continue;
 
       const data = {
-        count: Number(row.count) || 0,
-        recent: Number(row.recent) || 0,
+        count:       Number(row.count)       || 0,
+        recent:      Number(row.recent)      || 0,
         lastUpdated: typeof row.lastUpdated === "number" ? row.lastUpdated : now
       };
 
@@ -2226,7 +2277,7 @@ class TrendDetector {
     const store = this._store("readwrite");
     if (!store) return;
 
-    const now = Date.now();
+    const now    = Date.now();
     const ranked = [];
 
     for (const [word, data] of this._words.entries()) {
@@ -2239,24 +2290,35 @@ class TrendDetector {
 
     ranked.sort((a, b) =>
       (b.data.recent - a.data.recent) ||
-      (b.data.count - a.data.count)
+      (b.data.count  - a.data.count)
     );
 
-    const keep = ranked.slice(0, TREND_DB_MAX_WORDS);
+    // Apply per-context cap so a high-volume view (e.g. Firehose) cannot
+    // crowd out quieter views (e.g. a profile page) in the shared store.
+    const keep    = ranked.slice(0, TREND_DB_MAX_WORDS);
     const keepSet = new Set(keep.map(item => item.word));
 
+    const tx = this._idb.transaction(TREND_DB_STORE, "readwrite");
+    const s  = tx.objectStore(TREND_DB_STORE);
+
+    tx.onerror  = (e) => console.warn("TrendDetector: persist transaction error", e);
+    tx.onabort  = (e) => console.warn("TrendDetector: persist transaction aborted", e);
+
     for (const item of keep) {
-      store.put({
-        word: item.word,
-        count: item.data.count,
-        recent: item.data.recent,
+      // Compound keyPath ["context", "word"] — both fields must be present.
+      s.put({
+        context:     this._context,
+        word:        item.word,
+        count:       item.data.count,
+        recent:      item.data.recent,
         lastUpdated: item.data.lastUpdated
       });
     }
 
     for (const word of this._words.keys()) {
       if (!keepSet.has(word)) {
-        store.delete(word);
+        // Delete by compound key [context, word].
+        s.delete([this._context, word]);
         this._words.delete(word);
       }
     }
