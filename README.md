@@ -62,7 +62,7 @@ Just as a blog writer is a *blogger* and a YouTube creator is a *YouTuber*, ever
 - 🏠 **Home** — personalised stream of twists from Twisters you follow; Understream and Firehose supported
 - 🔭 **Explore** — global Twist Stream; sort New / Hot / Top; Firehose real-time stream; Understream toggle
 - 🌊 **Understream** — toggle between Twist Stream and full Steem data on Home, Explore, Profile, and Signals
-- 🔥 **Trending Now** — probabilistic real-time trend detector surfacing the top 10 words across all loaded content; present on every page (see [Trending Detection](#trending-detection-) below)
+- 🔥 **Trending Now** — probabilistic real-time trend detector surfacing the top 10 **semantic topics** (clusters of related words) across all loaded content; present on every page (see [Trending Detection](#trending-detection-) below)
 
 ### Twists
 - 📝 **Post twists** up to 280 characters (**media excluded**) with **markdown** and real-time **Write / Preview** tab
@@ -104,7 +104,9 @@ SteemTwist includes a **client-side streaming trend detector** that runs entirel
 
 It answers the question *"what is being talked about right now, on this page, in this moment?"* while also accumulating a long-term per-view baseline that survives browser reloads.
 
-### How it works
+The detector operates in two stages: **word-level scoring** (probabilistic decay model) followed by **topic-level clustering** (character n-gram embeddings). The widget always shows topics, never raw words.
+
+### Stage 1 — Word scoring
 
 For every word that appears in the loaded posts or signals, the detector maintains two counters:
 
@@ -113,15 +115,13 @@ For every word that appears in the loaded posts or signals, the detector maintai
 | `count`  | Lifetime occurrences — the word's historical baseline              |
 | `recent` | Time-decayed occurrences — how much the word has appeared *lately* |
 
-The **trend score** is:
+The **trend score** for each word is:
 
 ```
 score = recent / (count + 1)
 ```
 
-This ratio is high when a word is appearing frequently right now but is not yet overwhelmingly common historically — exactly the shape of a genuine trend.
-
-A word that has always been frequent scores low regardless of volume; a brand-new word that bursts suddenly scores high.
+This ratio is high when a word is appearing frequently right now but is not yet overwhelmingly common historically — exactly the shape of a genuine trend. A word that has always been frequent scores low regardless of volume; a brand-new word that bursts suddenly scores high.
 
 ### Time decay
 
@@ -138,6 +138,77 @@ Decay is triggered in two ways:
 * **Batch loads**: one decay pass before ingesting each batch of historical posts
 * **Firehose (live stream)**: a repeating **8-second timer** continuously decays inactive words
 
+### Stage 2 — Semantic topic clustering 🧠
+
+After scoring, the top 200 words are clustered into **topics** using lightweight character n-gram embeddings. No external ML library is needed — everything runs in the browser in under 1 ms.
+
+#### Why clustering?
+
+Raw word trends show `bitcoin`, `bitcoins`, and `btc` as three separate entries even though they represent the same conversation. Clustering groups them into a single topic, surfacing what people are actually discussing rather than which exact word forms they use.
+
+#### Embedding: character n-grams
+
+Each word is converted to a 128-dimensional float vector using character bigrams and trigrams:
+
+1. The word is boundary-padded: `"cook"` → `"^cook$"`
+2. Every **bigram** (`^c`, `co`, `oo`, `ok`, `k$`) and **trigram** (`^co`, `coo`, `ook`, `ok$`) is extracted
+3. Each n-gram is hashed into one of 128 buckets using an FNV-inspired rolling hash
+4. Bigrams contribute weight **1.0**; trigrams contribute **1.5** (more selective)
+5. The resulting vector is L2-normalised
+
+This is fundamentally more accurate than hashing individual characters because n-grams capture the *sequence* of letters, not just their frequency. Words from different languages (e.g. `prueba` and `prayer`) rarely share the same bigram and trigram patterns, so they are not falsely grouped together.
+
+#### Clustering: greedy seed-anchored algorithm
+
+Words are processed in descending score order. For each word:
+
+1. Its embedding is compared against the **seed vector** (the first word's embedding) of every existing topic using cosine similarity
+2. If any topic's seed exceeds the similarity **threshold** (default **0.75**), the word joins the closest one
+3. Otherwise it seeds a new singleton topic
+
+Crucially, merge decisions are always made against the **original seed vector**, not a running centroid average. Updating a centroid after each merge causes "centroid drift" — the cluster centre gradually moves toward later members, making it progressively easier for unrelated words to be pulled in. The seed-anchor approach keeps the cluster's identity stable.
+
+#### Topic score: average, not sum
+
+Each topic's score is the **average** of its members' individual word scores:
+
+```
+topic.score = mean({ word.score for word in topic.words })
+```
+
+Summing scores would systematically inflate multi-word clusters over singletons. With averaging, a hot singleton (`steemit`, score 0.48) correctly outranks a lukewarm two-word cluster (`bitcoin · bitcoins`, score 0.46), and a cluster only wins by having individually strong members.
+
+#### Topic label
+
+Each topic is labelled with up to **3 of its highest-scoring member words** joined by ` · `:
+
+```
+bitcoin · bitcoins · btc
+football · footballer
+cooking
+```
+
+Singletons display as a single word. The full member list is available in the `words` array of the topic object.
+
+#### Similarity threshold guide
+
+| Threshold | Effect |
+|---|---|
+| **0.75** (default) | Catches clear morphological variants: `bitcoin/bitcoins`, `football/footballer`, `crypto/cryptos` |
+| 0.65 | Also merges shorter suffix variants: `cook/cooking`, `blog/blogging` |
+| 0.60 | Very loose — risk of cross-language or coincidental merges |
+
+#### What does and does not cluster
+
+| Clusters ✅ | Does not cluster ❌ |
+|---|---|
+| `bitcoin` / `bitcoins` (0.84) | `square` / `prueba` (0.40) |
+| `football` / `footballer` (0.89) | `prayer` / `prueba` (0.61) |
+| `crypto` / `cryptos` (0.81) | `cook` / `bitcoin` (0.05) |
+| `learn` / `learning` (0.81) | `art` / `article` (0.43) |
+
+Numbers in parentheses are cosine similarities at dim = 128.
+
 ### Per-context IndexedDB Persistence 🧠
 
 Each view owns its own **isolated namespace** inside `SteemTwistTrendDB`. Words are stored with a compound key `[context, word]` so one view's baseline never bleeds into another's.
@@ -149,7 +220,7 @@ Each view owns its own **isolated namespace** inside `SteemTwistTrendDB`. Words 
 | Profile (@alice) | `"profile:alice"` |
 | Signals | `"signals"` |
 
-**Why per-context?** A burst of Firehose traffic on Explore should not inflate the trending words shown on @alice's profile page, and vice-versa. Each view accumulates its own long-term memory of language patterns, making trends more accurate the more you use that view.
+**Why per-context?** A burst of Firehose traffic on Explore should not inflate the trending topics shown on @alice's profile page, and vice-versa. Each view accumulates its own long-term memory of language patterns, making trends more accurate the more you use that view.
 
 **Survival across reloads:** On construction, the detector loads its context's rows from IDB and applies offline decay before ingestion begins. Common words retain their suppressed score; fresh bursty words spike as soon as they appear.
 
@@ -211,10 +282,11 @@ Before ingestion, `_tokenize()` cleans the input:
 The **Trending Now** widget (`TrendingWidgetComponent`) appears on all pages:
 
 * Collapsible UI
-* Top 10 terms with **relative bar chart**
+* Top 10 **topics** with **relative bar chart**
+* Each bar labelled with up to 3 member words joined by ` · `
 * Color gradient (blue → purple → pink)
 * Normalized score (0–100)
-* Tooltip with raw values (`score`, `recent`, `count`)
+* Tooltip with topic score and member word count
 * Context label (e.g. `Explore · Firehose`)
 * Smooth animations (0.4s ease)
 
@@ -224,13 +296,25 @@ The **Trending Now** widget (`TrendingWidgetComponent`) appears on all pages:
 // context identifies the view — words are stored in an isolated IDB namespace
 const td = new TrendDetector({ context: "profile:alice", decay: 0.99, minLen: 3 });
 
-td.ingestPosts(posts);      // batch ingest; applies decay first
-td.ingestPost(post);        // single live post (Firehose)
-td.ingestSignals(signals);  // signals feed; also ingests actor usernames
-td.decay();                 // manual decay tick (used by Firehose timer)
-td.getTrends(10);           // → [{ word, score, count, recent }, …]
-td.reset();                 // clears in-memory state; IDB baseline preserved
-td.destroy();               // cancel pending timer + close IDB connection (call from beforeUnmount)
+td.ingestPosts(posts);       // batch ingest; applies decay first
+td.ingestPost(post);         // single live post (Firehose)
+td.ingestSignals(signals);   // signals feed; also ingests actor usernames
+td.decay();                  // manual decay tick (used by Firehose timer)
+td.getTrends(n);             // → [{ word, score, count, recent }, …]  (word-level, internal)
+td.getTopicTrends(n);        // → [{ label, words, score, topN }, …]   (topic-level, used by widget)
+td.reset();                  // clears in-memory state; IDB baseline preserved
+td.destroy();                // cancel pending timer + close IDB connection (call from beforeUnmount)
+```
+
+`getTopicTrends` output shape:
+
+```js
+{
+  label: "bitcoin · bitcoins · btc",  // up to 3 top-scoring members joined by " · "
+  words: ["bitcoin", "bitcoins", "btc", ...],  // all member words, score-descending
+  score: 0.46,                        // average word score across all members
+  topN:  [{ word: "bitcoin", score: 0.48 }, ...]  // top 5 members with individual scores
+}
 ```
 
 ### IndexedDB schema (`SteemTwistTrendDB`)
@@ -575,13 +659,15 @@ steemtwist/
 
 ### Trend Detector
 - `TREND_STOPWORDS` — `Set<string>` of 100+ English stopwords and Steem/Markdown boilerplate terms excluded from trend analysis
-- `TrendDetector({ decay, minLen })` — class; `decay` defaults to `0.85`, `minLen` to `3`
+- `TrendDetector({ decay, minLen, context })` — class; `decay` defaults to `0.999`, `minLen` to `3`
   - `ingestPosts(posts[])` — tokenise each post body; apply one decay tick for the batch
   - `ingestPost(post)` — tokenise a single post (Firehose); no decay tick
   - `ingestSignals(signals[])` — tokenise signal bodies + actor usernames; apply one decay tick
   - `decay()` — multiply every word's `recent` counter by the decay factor
-  - `getTrends(n)` → `[{ word, score, count, recent }]` — top N by score, excluding words with `recent < 0.01`
+  - `getTrends(n)` → `[{ word, score, count, recent }]` — top N words by score (internal; used as input to clustering)
+  - `getTopicTrends(n, threshold)` → `[{ label, words, score, topN }]` — top N semantic topics; `threshold` defaults to `0.75`; used by `TrendingWidgetComponent`
   - `reset()` — clear all word counters and the seen-permlinks dedup Set
+  - `destroy()` — cancel pending persist timer and close IDB connection (call from `beforeUnmount`)
 
 ---
 
@@ -605,7 +691,7 @@ steemtwist/
 | `TwistCardComponent` | Full twist card: action bar (Love, Retwist, Replies, **Flag** for Live Twists); body; Edit; Delete; inline flag panel with reason selector |
 | `LiveTwistComposerComponent` | Live Twist editor: Card label, Body, Code textarea, ▶ Preview sandbox (`ref="previewSandbox"`), auto-resizing preview iframe, Templates gallery (Simple / Greetings / Queries / Actions), Publish ⚡ |
 | `TwistComposerComponent` | 🌀 Twist / ⚡ Live Twist tabs; Write/Preview on twist pane |
-| `TrendingWidgetComponent` | 🔥 Collapsible trend bar chart: 10 bars normalised to top scorer, blue→purple→pink gradient per rank, score badge with hover tooltip, source label; `startCollapsed` prop for Profile/Signals pages |
+| `TrendingWidgetComponent` | 🔥 Collapsible trend bar chart: top 10 **topics** with relative bar chart; each bar labelled with up to 3 member words joined by ` · `; blue→purple→pink gradient per rank; score badge with hover tooltip showing topic score and member count; context label; `startCollapsed` prop for Profile/Signals pages |
 | `SignalItemComponent` | Signal row: icon, label, preview, timestamp, View link |
 | `UserRowComponent` | Twister row with optional Follow/Unfollow button |
 | `SecretTwistComposerComponent` | Secret Twist composer: recipient, unlimited textarea, Write/Preview, Send 🔒 |
