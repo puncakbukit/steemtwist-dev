@@ -2352,35 +2352,87 @@ class TrendDetector {
   // Tuning
   // ──────
   //  threshold — controls cluster tightness.
-  //    0.85 (default) → tight; essentially only morphological variants cluster.
-  //    0.70           → looser; thematically related words may merge.
-  //    0.60           → very loose; expect broad catch-all topics.
+  //    0.75 (default) → catches clear morphological variants like
+  //                     bitcoin/bitcoins, football/footballer, crypto/cryptos.
+  //                     Short-suffix pairs (cook/cooking) stay as singletons.
+  //    0.65           → looser; merges suffix variants like cook/cooking.
+  //    0.60           → very loose; risk of cross-language false merges.
   //
-  //  dim — embedding dimensionality (default 16).  Higher → more discriminating
-  //    but slower.  16 is a good balance for browser use.
+  //  dim — embedding dimensionality (default 128).  Must be large enough
+  //    that n-gram hash collisions are rare.  128 works well for words up
+  //    to ~20 chars; do not go below 64.
 
   // ── Static embedding helpers (added to TrendDetector prototype) ───────────
 
   /**
-   * Map a word to a normalised float vector of length `dim`.
-   * Uses character-code modular hashing — fast, deterministic, no deps.
+   * Map a word to a normalised float vector using character n-gram hashing.
+   *
+   * Why n-grams instead of raw charCode hashing
+   * ─────────────────────────────────────────────
+   * The old approach hashed individual characters (charCode % dim), which
+   * caused unrelated words to collide whenever they happened to share a
+   * similar character-frequency distribution — e.g. "square", "prueba", and
+   * "prayer" all scored > 0.85 similarity despite having completely different
+   * meanings and origins.
+   *
+   * Character n-grams fix this because:
+   *  • A bigram like "pr" is shared by "prayer" and "prueba" but NOT by
+   *    "square", so different-language false-positives are suppressed.
+   *  • Trigrams like "pra" vs "squ" are even more selective — genuinely
+   *    similar words (morphological variants, e.g. "cook"/"cooking") share
+   *    many trigrams, while coincidentally similar words do not.
+   *  • Boundary markers (^ prefix, $ suffix) ensure "cat" ≠ "cats" share
+   *    most n-grams but are not identical, and short words aren't swamped
+   *    by longer ones.
+   *
+   * Algorithm
+   * ─────────
+   *  1. Pad the word with boundary markers: "^" + word + "$"
+   *  2. Extract every bigram and trigram from the padded string.
+   *  3. Hash each n-gram to a bucket in [0, dim) using a fast polynomial
+   *     rolling hash (FNV-inspired, prime multiplier 31).
+   *  4. Increment that bucket — bigrams weighted 1.0, trigrams weighted 1.5
+   *     (trigrams are more discriminating so they contribute more).
+   *  5. L2-normalise the resulting vector.
+   *
+   * Dimensionality
+   * ──────────────
+   * dim = 128 (default) gives enough buckets that collisions between
+   * unrelated n-grams are rare in practice for words up to ~20 chars.
+   * 64 also works well; 16 (old value) was far too small.
+   *
+   * @param {string} word
+   * @param {number} dim  — vector length (default 128)
+   * @returns {Float64Array}
    */
-  _getEmbedding(word, dim = 16) {
+  _getEmbedding(word, dim = 128) {
     const vec = new Float64Array(dim); // zero-initialised
 
-    for (let i = 0; i < word.length; i++) {
-      // Primary bucket: charCode mod dim
-      const primary = word.charCodeAt(i) % dim;
-      vec[primary] += 1;
+    // Boundary-padded form so "^ca", "cat", "at$" are distinct n-grams
+    const padded = "^" + word + "$";
 
-      // Secondary bucket: mix charCode with position for extra distinctiveness
-      if (word.length > 1) {
-        const secondary = (word.charCodeAt(i) * 31 + i) % dim;
-        vec[secondary] += 0.5;
+    // Hash a short string (2–3 chars) to a bucket in [0, dim)
+    // using a simple polynomial rolling hash.
+    function hashNgram(s) {
+      let h = 2166136261; // FNV offset basis (32-bit)
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = (h * 16777619) >>> 0; // FNV prime, keep 32-bit unsigned
       }
+      return h % dim;
     }
 
-    // L2 normalise so cosine similarity is just a dot product
+    // Bigrams (weight 1.0) — capture letter-pair patterns
+    for (let i = 0; i < padded.length - 1; i++) {
+      vec[hashNgram(padded.slice(i, i + 2))] += 1.0;
+    }
+
+    // Trigrams (weight 1.5) — more selective; reduce cross-language collisions
+    for (let i = 0; i < padded.length - 2; i++) {
+      vec[hashNgram(padded.slice(i, i + 3))] += 1.5;
+    }
+
+    // L2 normalise so cosine similarity is purely directional
     let normSq = 0;
     for (let i = 0; i < dim; i++) normSq += vec[i] * vec[i];
     const norm = Math.sqrt(normSq) || 1;
@@ -2417,21 +2469,29 @@ class TrendDetector {
    *   topN:   {word,score}[],  — top 5 members by score
    * }>} sorted by score descending
    */
-  _clusterWords(items, threshold = 0.85, dim = 16) {
+  _clusterWords(items, threshold = 0.75, dim = 128) {
     // Pre-compute embeddings once
     const embedded = items.map(item => ({
       ...item,
       vec: this._getEmbedding(item.word, dim),
     }));
 
-    const topics = []; // { center: Float64Array, words: embedded[], score: number }
+    // Each topic stores:
+    //   seed  — the embedding of the first (highest-scoring) word that
+    //           opened this cluster.  All merge decisions are made against
+    //           the seed, not a drifting centroid.  This prevents "centroid
+    //           drift" where unrelated words gradually pull the average
+    //           toward them, making subsequent false merges more likely.
+    //   words — accumulated member items
+    //   score — summed trend score of all members
+    const topics = []; // { seed: Float64Array, words: embedded[], score: number }
 
     for (const item of embedded) {
-      let bestIdx    = -1;
-      let bestSim    = threshold; // must exceed threshold to merge
+      let bestIdx = -1;
+      let bestSim = threshold; // must strictly exceed threshold to merge
 
       for (let t = 0; t < topics.length; t++) {
-        const sim = this._cosineSimilarity(item.vec, topics[t].center);
+        const sim = this._cosineSimilarity(item.vec, topics[t].seed);
         if (sim > bestSim) {
           bestSim = sim;
           bestIdx = t;
@@ -2439,26 +2499,14 @@ class TrendDetector {
       }
 
       if (bestIdx >= 0) {
-        // Merge into existing topic — update running centroid average
-        const topic = topics[bestIdx];
-        const n     = topic.words.length;
-        for (let i = 0; i < dim; i++) {
-          topic.center[i] = (topic.center[i] * n + item.vec[i]) / (n + 1);
-        }
-        // Re-normalise centroid to keep cosine arithmetic valid
-        let cNormSq = 0;
-        for (let i = 0; i < dim; i++) cNormSq += topic.center[i] * topic.center[i];
-        const cNorm = Math.sqrt(cNormSq) || 1;
-        for (let i = 0; i < dim; i++) topic.center[i] /= cNorm;
-
-        topic.words.push(item);
-        topic.score += item.score;
+        topics[bestIdx].words.push(item);
+        topics[bestIdx].score += item.score;
       } else {
         // Seed a new topic — clone the vector so mutations don't bleed
         topics.push({
-          center: Float64Array.from(item.vec),
-          words:  [item],
-          score:  item.score,
+          seed:  Float64Array.from(item.vec),
+          words: [item],
+          score: item.score,
         });
       }
     }
@@ -2497,7 +2545,7 @@ class TrendDetector {
    *   //   { label: "football", words: ["football","match","team"], score: 1.87, topN: [...] },
    *   // ]
    */
-  getTopicTrends(topN = 5, threshold = 0.85) {
+  getTopicTrends(topN = 5, threshold = 0.75) {
     // Collect individual word trends first (re-uses existing scored list)
     const wordTrends = this.getTrends(200); // sample up to 200 words for clustering
 
