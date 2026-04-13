@@ -5644,7 +5644,7 @@ const TrendingWidgetComponent = {
   name: "TrendingWidgetComponent",
 
   props: {
-    // Array of { word, score, count, recent } — output of TrendDetector.getTrends()
+    // Array of { label, words, score, topN } — output of TrendDetector.getTopicTrends()
     trends:  { type: Array, default: () => [] },
     // Short label shown in the header, e.g. "Explore · Firehose"
     source:  { type: String, default: "" },
@@ -5725,7 +5725,7 @@ const TrendingWidgetComponent = {
         <div v-else style="padding:10px 12px;display:flex;flex-direction:column;gap:5px;">
           <div
             v-for="(t, i) in barsData"
-            :key="t.word"
+            :key="t.label"
             style="display:flex;align-items:center;gap:8px;"
           >
             <!-- Rank -->
@@ -5744,17 +5744,17 @@ const TrendingWidgetComponent = {
                 transition: 'width 0.4s ease',
                 opacity: 0.85
               }"></div>
-              <!-- Word label overlay -->
+              <!-- Topic label overlay -->
               <span style="
                 position:absolute;left:7px;top:50%;transform:translateY(-50%);
                 font-size:12px;font-weight:600;color:#fff;
                 text-shadow:0 1px 3px rgba(0,0,0,0.7);
                 white-space:nowrap;pointer-events:none;
-              ">{{ t.word }}</span>
+              ">{{ t.label }}</span>
             </div>
 
             <!-- Score badge -->
-            <span :title="'score ' + t.score.toFixed(3) + ' · recent ' + t.recent.toFixed(2) + ' · total ' + t.count" style="
+            <span :title="'score ' + t.score.toFixed(3) + ' · words ' + t.words.length" style="
               width:36px;text-align:right;font-size:11px;
               color:#9b8db0;flex-shrink:0;font-variant-numeric:tabular-nums;
             ">{{ (t.score * 100).toFixed(0) }}</span>

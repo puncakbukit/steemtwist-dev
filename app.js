@@ -221,7 +221,7 @@ const ExploreView = {
   methods: {
     // ── Trend detection helpers ──────────────────────────────
     _refreshTrends() {
-      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+      this.trends = this._trendDetector ? this._trendDetector.getTopicTrends(10) : [];
     },
     _startDecayTimer() {
       this._stopDecayTimer();
@@ -658,7 +658,7 @@ const HomeView = {
   methods: {
     // ── Trend detection helpers ──────────────────────────────
     _refreshTrends() {
-      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+      this.trends = this._trendDetector ? this._trendDetector.getTopicTrends(10) : [];
     },
     _startDecayTimer() {
       this._stopDecayTimer();
@@ -1064,7 +1064,7 @@ const ProfileView = {
 
   methods: {
     _refreshTrends() {
-      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+      this.trends = this._trendDetector ? this._trendDetector.getTopicTrends(10) : [];
     },
 
     async loadProfile(refreshPin = true) {
@@ -1512,7 +1512,7 @@ const SignalsView = {
 
   methods: {
     _refreshTrends() {
-      this.trends = this._trendDetector ? this._trendDetector.getTrends(10) : [];
+      this.trends = this._trendDetector ? this._trendDetector.getTopicTrends(10) : [];
     },
 
     // Scan further back in account history for older signals.
