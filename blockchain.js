@@ -2500,7 +2500,7 @@ class TrendDetector {
 
       if (bestIdx >= 0) {
         topics[bestIdx].words.push(item);
-        topics[bestIdx].score += item.score;
+        topics[bestIdx].score = topics[bestIdx].words.reduce((s, w) => s + w.score, 0) / topics[bestIdx].words.length;
       } else {
         // Seed a new topic — clone the vector so mutations don't bleed
         topics.push({
