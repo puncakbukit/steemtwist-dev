@@ -1496,7 +1496,8 @@ const ReplyCardComponent = {
     },
     canUploadReplyImage() { return this.replyMediaCount < this.mediaLimit; },
     canAct()   { return !!this.username && this.hasKeychain; },
-    indent()   { return Math.min(this.depth, 4) * 16; },
+    threadOffset() { return Math.min(this.depth, 6) * 10; },
+    showThreadGuide() { return this.depth > 0; },
     
     upvoteCount() {
   const votes = this.reply.active_votes;
@@ -1718,7 +1719,11 @@ const ReplyCardComponent = {
     window.removeEventListener("message", this.onLiveReplyPreviewMessage);
   },
   template: `
-    <div :style="{ paddingLeft: indent + 'px' }">
+    <div :style="{ position:'relative', marginLeft: threadOffset + 'px' }">
+      <div v-if="showThreadGuide" style="position:absolute;left:-8px;top:0;bottom:0;width:8px;pointer-events:none;">
+        <div style="position:absolute;left:3px;top:0;bottom:0;width:2px;background:#2e2050;border-radius:999px;opacity:0.85;"></div>
+        <div style="position:absolute;left:3px;top:22px;width:10px;height:2px;background:#2e2050;border-radius:999px;opacity:0.85;"></div>
+      </div>
       <div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #2e2050;">
 
         <!-- Avatar -->
@@ -1999,7 +2004,7 @@ const ReplyCardComponent = {
               <div v-if="liveReplyTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">
                 <iframe :key="liveReplyPreviewKey" ref="liveReplyPreview" sandbox="allow-scripts"
                   :srcdoc="buildLiveReplySandboxDoc(liveReplyCode)"
-                  :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e' }"
+                  :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e', transition:'height 0.2s ease-in-out' }"
                   scrolling="no"></iframe>
               </div>
               <div v-if="liveReplyTab === 'templates'" style="border:1px solid #2e2050;border-radius:0 8px 8px 8px;background:#0a0616;padding:8px;">
@@ -3274,6 +3279,7 @@ ${'<'}/script>
             width:100%;border:none;display:block;
             min-height:60px;height:200px;
             background:#0f0a1e;
+            transition:height 0.2s ease-in-out;
           "
           scrolling="no"
         ></iframe>
@@ -3359,6 +3365,7 @@ const TwistCardComponent = {
       isEditing:       false,
       showDeleteConfirm: false,
       isDeleting:      false,
+      showMoreActions: false,
       editedBody:      null,    // local override after successful edit
       editedCode:      null,    // local code override after live twist edit
       // ── Live Twist flag (downvote + reason reply) ──────────────────
@@ -3761,6 +3768,7 @@ const TwistCardComponent = {
       });
     },
     confirmDelete() {
+      this.showMoreActions = false;
       this.showDeleteConfirm = true;
     },
     doDelete() {
@@ -3775,6 +3783,9 @@ const TwistCardComponent = {
           this.lastError = res.error || res.message || "Delete failed.";
         }
       });
+    },
+    toggleMoreActions() {
+      this.showMoreActions = !this.showMoreActions;
     }
   },
   mounted() {
@@ -3837,7 +3848,7 @@ const TwistCardComponent = {
       </div>
 
       <!-- Footer actions -->
-      <div style="display:flex;align-items:center;gap:12px;font-size:13px;margin-top:12px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;font-size:13px;margin-top:12px;flex-wrap:wrap;">
 
         <!-- Love -->
         <button
@@ -3847,9 +3858,9 @@ const TwistCardComponent = {
             background: hasVoted ? '#3b0764' : '#1e1535',
             color:      hasVoted ? '#e879f9' : '#9b8db0',
             border:     hasVoted ? '1px solid #a855f7' : '1px solid #2e2050',
-            borderRadius:'20px', padding:'4px 12px',
+            borderRadius:'999px', padding:'6px 14px',
             cursor: (!canAct || hasVoted) ? 'default' : 'pointer',
-            fontSize:'13px', margin:0
+            fontSize:'14px', margin:0, fontWeight:'600'
           }"
         >{{ isVoting ? "…" : (hasVoted ? "❤️" : "🤍") }} {{ upvoteCount }}</button>
 
@@ -3861,9 +3872,9 @@ const TwistCardComponent = {
             background: hasRetwisted ? '#0c2d1a' : '#1e1535',
             color:      hasRetwisted ? '#4ade80' : '#9b8db0',
             border:     hasRetwisted ? '1px solid #166534' : '1px solid #2e2050',
-            borderRadius:'20px', padding:'4px 12px',
+            borderRadius:'999px', padding:'6px 14px',
             cursor: (!canAct || hasRetwisted || post.author === username) ? 'default' : 'pointer',
-            fontSize:'13px', margin:0
+            fontSize:'14px', margin:0, fontWeight:'600'
           }"
           :title="post.author === username ? 'Cannot retwist your own twist' : ''"
         >{{ isRetwisting ? "…" : (hasRetwisted ? "🔁 Retwisted" : "🔁") }}</button>
@@ -3872,7 +3883,7 @@ const TwistCardComponent = {
         <button
           @click="toggleReplies"
           style="background:#1e1535;color:#9b8db0;border:1px solid #2e2050;
-                 border-radius:20px;padding:4px 12px;font-size:13px;margin:0;"
+                 border-radius:999px;padding:6px 14px;font-size:14px;font-weight:600;margin:0;"
         >💬 {{ replyCount }}</button>
 
         <!-- Flag — Live Twists only, other users only -->
@@ -3898,38 +3909,42 @@ const TwistCardComponent = {
           title="Open twist page"
         >🔗</a>
 
-        <!-- Pin / Unpin — own posts only -->
-        <button
-          v-if="isOwnPost && hasKeychain"
-          @click="pinned ? unpinPost() : pinPost()"
-          :disabled="isPinning"
-          :style="{
-            background: pinned ? '#1a2a0a' : '#1e1535',
-            color:      pinned ? '#86efac' : '#9b8db0',
-            border:     pinned ? '1px solid #166534' : '1px solid #2e2050',
-            borderRadius:'20px', padding:'4px 10px',
-            fontSize:'12px', margin:0,
-            cursor: isPinning ? 'default' : 'pointer'
-          }"
-          :title="pinned ? 'Unpin this twist' : 'Pin to top of your profile'"
-        >{{ isPinning ? '…' : (pinned ? '📌 Pinned' : '📌') }}</button>
-
-        <!-- Edit / Delete — own posts only -->
-        <button
-          v-if="isOwnPost && hasKeychain"
-          @click="openEdit"
-          style="background:#1e1535;color:#9b8db0;border:1px solid #2e2050;
-                 border-radius:20px;padding:4px 10px;font-size:12px;margin:0;"
-          title="Edit this twist"
-        >✏️</button>
-
-        <button
-          v-if="isOwnPost && hasKeychain"
-          @click="confirmDelete"
-          style="background:#1e1535;color:#9b8db0;border:1px solid #2e2050;
-                 border-radius:20px;padding:4px 10px;font-size:12px;margin:0;"
-          title="Delete this twist"
-        >🗑️</button>
+        <!-- More menu for secondary actions -->
+        <div v-if="isOwnPost && hasKeychain" style="position:relative;">
+          <button
+            @click="toggleMoreActions"
+            :style="{
+              background: showMoreActions ? '#2e2050' : '#1e1535',
+              color:'#9b8db0', border:'1px solid #2e2050',
+              borderRadius:'999px', padding:'6px 12px',
+              fontSize:'14px', fontWeight:'700', margin:0, minWidth:'40px'
+            }"
+            title="More actions"
+          >⋯</button>
+          <div
+            v-if="showMoreActions"
+            style="
+              position:absolute;right:0;top:calc(100% + 6px);z-index:10;
+              min-width:148px;padding:6px;background:#140b28;border:1px solid #2e2050;
+              border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,0.35);
+              display:flex;flex-direction:column;gap:4px;
+            "
+          >
+            <button
+              @click="pinned ? unpinPost() : pinPost(); showMoreActions = false"
+              :disabled="isPinning"
+              style="text-align:left;background:#1e1535;border:1px solid #2e2050;color:#c0b0e0;border-radius:8px;padding:6px 10px;font-size:12px;margin:0;"
+            >{{ isPinning ? '…' : (pinned ? '📌 Unpin' : '📌 Pin') }}</button>
+            <button
+              @click="openEdit(); showMoreActions = false"
+              style="text-align:left;background:#1e1535;border:1px solid #2e2050;color:#c0b0e0;border-radius:8px;padding:6px 10px;font-size:12px;margin:0;"
+            >✏️ Edit</button>
+            <button
+              @click="confirmDelete"
+              style="text-align:left;background:#2d0a0a;border:1px solid #7f1d1d;color:#fca5a5;border-radius:8px;padding:6px 10px;font-size:12px;margin:0;"
+            >🗑️ Delete</button>
+          </div>
+        </div>
 
       </div>
 
@@ -4188,7 +4203,7 @@ const TwistCardComponent = {
           <div v-if="liveReplyTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">
             <iframe :key="liveReplyPreviewKey" ref="liveReplyPreview" sandbox="allow-scripts"
               :srcdoc="buildLiveReplySandboxDoc(liveReplyCode)"
-              :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e' }"
+              :style="{ width:'100%', border:'none', display:'block', height: liveReplyIframeHeight + 'px', background:'#0f0a1e', transition:'height 0.2s ease-in-out' }"
               scrolling="no"></iframe>
           </div>
           <div v-if="liveReplyTab === 'templates'" style="border:1px solid #2e2050;border-radius:0 8px 8px 8px;background:#0a0616;padding:10px;">
@@ -4447,7 +4462,7 @@ const LiveTwistComposerComponent = {
       <div v-if="activeTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">
         <iframe :key="previewKey" ref="previewSandbox" sandbox="allow-scripts" allow="camera 'none'; microphone 'none'; geolocation 'none'; payment 'none'; usb 'none'" 
           :srcdoc="buildSandboxDoc(code)"
-          :style="{ width:'100%', border:'none', display:'block', height: iframeHeight + 'px', background:'#0f0a1e' }"
+          :style="{ width:'100%', border:'none', display:'block', height: iframeHeight + 'px', background:'#0f0a1e', transition:'height 0.2s ease-in-out' }"
           scrolling="no"></iframe>
       </div>
 
@@ -4595,6 +4610,12 @@ const TwistComposerComponent = {
   computed: {
     charCount()   { return countTwistCharsExcludingMedia(this.message); },
     overLimit()   { return this.charCount > 280; },
+    nearLimit()   { return this.charCount >= 260 && !this.overLimit; },
+    counterColor() {
+      if (this.overLimit || this.mediaLimitExceeded) return "#fca5a5";
+      if (this.nearLimit) return "#fb923c";
+      return "#5a4e70";
+    },
     mediaCount()  { return countMediaEmbeds(this.message); },
     mediaLimitExceeded() { return this.mediaCount > REGULAR_TWIST_MEDIA_LIMIT; },
     mediaLimit()  { return REGULAR_TWIST_MEDIA_LIMIT; },
@@ -4782,7 +4803,7 @@ const TwistComposerComponent = {
         ></div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-          <span :style="{ fontSize:'13px', color: (overLimit || mediaLimitExceeded) ? '#fca5a5' : '#5a4e70' }">
+          <span :style="{ fontSize:'13px', color: counterColor }">
             {{ charCount }} / 280 (media excluded) · media {{ mediaCount }}/{{ mediaLimit }}
           </span>
           <button @click="submit" :disabled="!canPost" style="padding:7px 20px;margin:0;">
@@ -5435,10 +5456,12 @@ const SecretTwistCardComponent = {
     }
   },
   template: `
+    <div :style="{ display:'flex', justifyContent: isSender ? 'flex-end' : 'flex-start' }">
     <div :style="{
-      background:'#1a1030', border:'1px solid #3b1f5e', borderRadius:'12px',
-      padding:'14px 16px', margin:'10px auto', maxWidth:'600px', textAlign:'left',
-      borderColor: isHighlighted ? '#facc15' : '#3b1f5e',
+      background: isSender ? '#24133f' : '#1a1030',
+      border:'1px solid #3b1f5e', borderRadius:'14px',
+      padding:'14px 16px', margin:'10px 0', width:'min(92%, 560px)', textAlign:'left',
+      borderColor: isHighlighted ? '#facc15' : (isSender ? '#5b2a9a' : '#3b1f5e'),
       boxShadow: isHighlighted ? '0 0 0 1px #facc15 inset' : 'none'
     }">
       <div v-if="showParentLink && hasParent" style="margin-bottom:8px;">
@@ -5449,7 +5472,7 @@ const SecretTwistCardComponent = {
         >↪ View original in Sent</a>
       </div>
       <!-- Header -->
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <div :style="{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px', flexDirection: isSender ? 'row-reverse' : 'row' }">
         <a :href="'#/@' + post.author">
           <img
             :src="avatarUrl"
@@ -5633,6 +5656,7 @@ const SecretTwistCardComponent = {
         Loading replies…
       </div>
     </div>
+    </div>
   `
 };
 
@@ -5664,6 +5688,7 @@ const TrendingWidgetComponent = {
   data() {
     return {
       collapsed: this.startCollapsed,
+      expandedTopic: null
     };
   },
 
@@ -5735,8 +5760,9 @@ const TrendingWidgetComponent = {
           <div
             v-for="(t, i) in barsData"
             :key="t.label"
-            style="display:flex;align-items:center;gap:8px;"
+            style="display:flex;flex-direction:column;gap:4px;"
           >
+          <div style="display:flex;align-items:center;gap:8px;">
             <!-- Rank -->
             <span style="
               width:16px;text-align:right;font-size:11px;
@@ -5767,6 +5793,17 @@ const TrendingWidgetComponent = {
               width:36px;text-align:right;font-size:11px;
               color:#9b8db0;flex-shrink:0;font-variant-numeric:tabular-nums;
             ">{{ (t.score * 100).toFixed(0) }}</span>
+            <button
+              @click="expandedTopic = expandedTopic === t.label ? null : t.label"
+              style="background:none;border:none;color:#9b8db0;font-size:11px;padding:0 2px;cursor:pointer;white-space:nowrap;"
+            >{{ expandedTopic === t.label ? 'Hide details' : 'Tap for details' }}</button>
+          </div>
+          <div
+            v-if="expandedTopic === t.label && t.topN && t.topN.length"
+            style="margin-left:24px;font-size:11px;color:#bcaed0;line-height:1.4;"
+          >
+            {{ t.topN.join(' · ') }}
+          </div>
           </div>
 
           <!-- Legend -->
