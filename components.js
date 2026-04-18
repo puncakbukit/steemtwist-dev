@@ -1208,13 +1208,10 @@ const UserProfileComponent = {
     },
   },
   template: `
-    <div v-if="profileData" style="max-width:600px;margin:0 auto 16px;">
+    <div v-if="profileData" class="sb-profile-wrap">
 
       <!-- Card body — no cover image here (shown globally in header) -->
-      <div style="
-        background:#1e1535;border:1px solid #2e2050;
-        border-radius:12px;padding:16px;
-      ">
+      <div class="sb-card sb-profile-card">
         <!-- Avatar row -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <img
@@ -1316,14 +1313,9 @@ const LoadingSpinnerComponent = {
     message: { type: String, default: "Loading..." }
   },
   template: `
-    <div style="text-align:center;padding:30px;color:#5a4e70;">
-      <div style="
-        display:inline-block;width:32px;height:32px;
-        border:4px solid #2e2050;border-top-color:#a855f7;
-        border-radius:50%;animation:spin 0.8s linear infinite;
-      "></div>
-      <p style="margin-top:10px;font-size:14px;">{{ message }}</p>
-      <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+    <div class="sb-loading-wrap">
+      <div class="sb-loading-spinner spin-ring"></div>
+      <p class="sb-loading-text">{{ message }}</p>
     </div>
   `
 };
@@ -3772,10 +3764,7 @@ const TwistCardComponent = {
     window.removeEventListener("message", this.onLiveReplyPreviewMessage);
   },
   template: `
-    <div style="
-      background:#1e1535;border:1px solid #2e2050;border-radius:12px;
-      padding:14px 16px;margin:10px auto;max-width:600px;text-align:left;
-    ">
+    <div class="sb-card sb-post-card">
       <!-- Header -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <a :href="'#/@' + post.author">

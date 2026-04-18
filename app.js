@@ -423,7 +423,7 @@ const ExploreView = {
   },
 
   template: `
-    <div style="margin-top:20px;">
+    <div class="sb-view">
 
       <!-- Trending widget — shown once posts are loaded -->
       <trending-widget-component
@@ -433,16 +433,12 @@ const ExploreView = {
       ></trending-widget-component>
 
       <!-- Top bar -->
-      <div style="
-        display:flex;align-items:center;flex-wrap:wrap;gap:8px;
-        font-size:13px;color:#5a4e70;margin-bottom:14px;
-      ">
+      <div class="sb-toolbar sb-toolbar-muted">
         <span>📅 <strong>{{ monthlyRoot }}</strong></span>
 
         <button
           @click="loadFeed(true)"
-          style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                 border-radius:12px;padding:2px 10px;font-size:12px;"
+          class="sb-chip-btn"
         >⟳ Refresh</button>
 
         <!-- Understream toggle -->
@@ -472,16 +468,13 @@ const ExploreView = {
         >{{ firehoseOn ? '🔥 Firehose ON' : '🔥 Firehose OFF' }}</button>
 
         <!-- Real-time pulse -->
-        <span v-if="firehoseOn" style="display:flex;align-items:center;gap:5px;color:#fb923c;font-size:12px;">
-          <span style="
-            display:inline-block;width:8px;height:8px;border-radius:50%;
-            background:#fb923c;animation:twistFlash 1s ease-in-out infinite alternate;
-          "></span>
+        <span v-if="firehoseOn" class="sb-pulse">
+          <span class="sb-pulse-dot"></span>
           Real-time
         </span>
 
         <!-- Sort mode tabs — right-aligned -->
-        <div style="margin-left:auto;display:flex;gap:4px;">
+        <div class="sb-sort-group">
           <button
             v-for="mode in [{key:'new',label:'🕒 New'},{key:'hot',label:'🔥 Hot'},{key:'top',label:'⬆ Top'}]"
             :key="mode.key"
@@ -512,10 +505,7 @@ const ExploreView = {
       ></twist-composer-component>
 
       <!-- CTA for guests — shows @steemtwist cover + avatar as fallback -->
-      <div v-if="!username" style="
-        background:#1e1535;border:1px solid #2e2050;border-radius:12px;
-        overflow:hidden;max-width:600px;margin:0 auto 20px;
-      ">
+      <div v-if="!username" class="sb-card sb-guest-card">
         <div style="
           height:100px;
           background:linear-gradient(135deg,#1a3af5 0%,#8b2fc9 55%,#e0187a 100%);
@@ -556,7 +546,7 @@ const ExploreView = {
         </div>
 
         <div v-if="sortedTwists.filter(p => !pinnedTwist || p.permlink !== pinnedTwist.permlink).length === 0"
-             style="color:#5a4e70;padding:40px 0;font-size:15px;text-align:center;">
+             class="sb-empty-feed">
           No twists yet this month. Be the first! 🌀
         </div>
 
@@ -574,20 +564,17 @@ const ExploreView = {
         ></twist-card-component>
 
         <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0 || canLoadOlder"
-             style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
+        <div v-if="sortedTwists.length > 0 || canLoadOlder" class="sb-pagination">
           <button
             v-if="hasMore"
             @click="page++"
-            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+            class="sb-pill-btn"
           >Load more</button>
           <button
             v-if="canLoadOlder"
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
-            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+            class="sb-pill-btn"
           >{{ loadingOlderMonth ? "Loading…" : (understreamOn ? "Load more posts" : "Load older months") }}</button>
         </div>
       </template>
@@ -835,7 +822,7 @@ const HomeView = {
   },
 
   template: `
-    <div style="margin-top:20px;">
+    <div class="sb-view">
 
       <!-- Trending widget -->
       <trending-widget-component
@@ -845,17 +832,13 @@ const HomeView = {
       ></trending-widget-component>
 
       <!-- Top bar -->
-      <div style="
-        display:flex;align-items:center;flex-wrap:wrap;gap:8px;
-        font-size:13px;margin-bottom:14px;
-      ">
+      <div class="sb-toolbar">
         <span style="color:#e8e0f0;font-weight:600;font-size:15px;">🏠 Home</span>
         <span style="color:#5a4e70;font-size:12px;">Twists from Twisters you follow</span>
 
         <button
           @click="loadFeed"
-          style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                 border-radius:12px;padding:2px 10px;font-size:12px;margin:0;"
+          class="sb-chip-btn"
         >⟳ Refresh</button>
 
         <!-- Understream toggle -->
@@ -885,16 +868,13 @@ const HomeView = {
         >{{ firehoseOn ? '🔥 Firehose ON' : '🔥 Firehose OFF' }}</button>
 
         <!-- Real-time pulse -->
-        <span v-if="firehoseOn" style="display:flex;align-items:center;gap:5px;color:#fb923c;font-size:12px;">
-          <span style="
-            display:inline-block;width:8px;height:8px;border-radius:50%;
-            background:#fb923c;animation:twistFlash 1s ease-in-out infinite alternate;
-          "></span>
+        <span v-if="firehoseOn" class="sb-pulse">
+          <span class="sb-pulse-dot"></span>
           Real-time
         </span>
 
         <!-- Sort tabs — right-aligned -->
-        <div style="margin-left:auto;display:flex;gap:4px;">
+        <div class="sb-sort-group">
           <button
             v-for="mode in [{key:'new',label:'🕒 New'},{key:'hot',label:'🔥 Hot'},{key:'top',label:'⬆ Top'}]"
             :key="mode.key"
@@ -923,10 +903,7 @@ const HomeView = {
       ></twist-composer-component>
 
       <!-- Logged-out -->
-      <div v-if="!username" style="
-        background:#1e1535;border:1px solid #2e2050;border-radius:12px;
-        padding:32px 20px;text-align:center;max-width:600px;margin:0 auto 20px;
-      ">
+      <div v-if="!username" class="sb-card sb-empty-state">
         <div style="font-size:36px;margin-bottom:12px;">🌀</div>
         <div style="color:#e8e0f0;font-size:16px;font-weight:600;margin-bottom:8px;">
           Welcome to SteemTwist
@@ -934,22 +911,19 @@ const HomeView = {
         <div style="color:#9b8db0;font-size:14px;margin-bottom:16px;">
           Sign in with Steem Keychain to see twists from Twisters you follow.
         </div>
-        <a href="#/explore" style="color:#a855f7;font-size:14px;text-decoration:none;">
+        <a href="#/explore" class="sb-link">
           Browse the Explore feed instead →
         </a>
       </div>
 
       <!-- Empty following list -->
-      <div v-else-if="emptyFeed && !loading" style="
-        background:#1e1535;border:1px solid #2e2050;border-radius:12px;
-        padding:32px 20px;text-align:center;max-width:600px;margin:0 auto;
-      ">
+      <div v-else-if="emptyFeed && !loading" class="sb-card sb-empty-state">
         <div style="font-size:32px;margin-bottom:10px;">👤</div>
         <div style="color:#e8e0f0;font-size:15px;font-weight:600;margin-bottom:8px;">Your feed is empty</div>
         <div style="color:#9b8db0;font-size:14px;margin-bottom:14px;">
           Follow some Twisters to see their twists here.
         </div>
-        <a href="#/explore" style="color:#a855f7;font-size:14px;text-decoration:none;">
+        <a href="#/explore" class="sb-link">
           Discover Twisters on Explore →
         </a>
       </div>
@@ -958,8 +932,7 @@ const HomeView = {
       <loading-spinner-component v-else-if="loading" message="Loading your feed…"></loading-spinner-component>
 
       <template v-else>
-        <div v-if="sortedTwists.length === 0"
-             style="color:#5a4e70;padding:40px 0;font-size:15px;text-align:center;">
+        <div v-if="sortedTwists.length === 0" class="sb-empty-feed">
           No twists from followed Twisters this month yet.
         </div>
 
@@ -976,20 +949,17 @@ const HomeView = {
         ></twist-card-component>
 
         <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0 || canLoadOlder"
-             style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:16px 0;">
+        <div v-if="sortedTwists.length > 0 || canLoadOlder" class="sb-pagination">
           <button
             v-if="hasMore"
             @click="page++"
-            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+            class="sb-pill-btn"
           >Load more</button>
           <button
             v-if="canLoadOlder"
             @click="loadOlderMonth"
             :disabled="loadingOlderMonth"
-            style="background:#1e1535;color:#a855f7;border:1px solid #2e2050;
-                   border-radius:20px;padding:6px 24px;font-size:13px;cursor:pointer;"
+            class="sb-pill-btn"
           >{{ loadingOlderMonth ? "Loading…" : "Load older months" }}</button>
         </div>
       </template>

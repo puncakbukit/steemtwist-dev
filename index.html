@@ -149,9 +149,128 @@
       100% { background-color: var(--card); }
     }
     .twist-flash { animation: twistFlash 2.5s ease-out forwards; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Spinner colour */
     .spin-ring { border-top-color: var(--accent) !important; }
+
+    /* Shared layout utilities for view templates */
+    .sb-view {
+      margin-top: 20px;
+    }
+    .sb-toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .sb-toolbar-muted {
+      font-size: 13px;
+      color: var(--text-faint);
+    }
+    .sb-sort-group {
+      margin-left: auto;
+      display: flex;
+      gap: 4px;
+    }
+    .sb-chip-btn {
+      background: var(--card);
+      color: var(--accent);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 2px 10px;
+      font-size: 12px;
+      margin: 0;
+    }
+    .sb-pill-btn {
+      background: var(--card);
+      color: var(--accent);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 6px 24px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .sb-pulse {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: #fb923c;
+      font-size: 12px;
+    }
+    .sb-pulse-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #fb923c;
+      animation: twistFlash 1s ease-in-out infinite alternate;
+    }
+    .sb-card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+    }
+    .sb-guest-card {
+      max-width: 600px;
+      margin: 0 auto 20px;
+      overflow: hidden;
+    }
+    .sb-empty-state {
+      max-width: 600px;
+      margin: 0 auto;
+      text-align: center;
+      padding: 32px 20px;
+    }
+    .sb-empty-feed {
+      color: var(--text-faint);
+      padding: 40px 0;
+      font-size: 15px;
+      text-align: center;
+    }
+    .sb-pagination {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 16px 0;
+    }
+    .sb-link {
+      color: var(--accent);
+      font-size: 14px;
+      text-decoration: none;
+    }
+    .sb-profile-wrap {
+      max-width: 600px;
+      margin: 0 auto 16px;
+    }
+    .sb-profile-card {
+      padding: 16px;
+    }
+    .sb-post-card {
+      padding: 14px 16px;
+      margin: 10px auto;
+      max-width: 600px;
+      text-align: left;
+    }
+    .sb-loading-wrap {
+      text-align: center;
+      padding: 30px;
+      color: var(--text-faint);
+    }
+    .sb-loading-spinner {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      border: 4px solid var(--card-border);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .sb-loading-text {
+      margin-top: 10px;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
