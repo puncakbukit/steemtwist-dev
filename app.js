@@ -601,6 +601,8 @@ const HomeView = {
       isPosting:           false,
       sortMode:            "new",
       emptyFeed:           false,
+      suggestedTwisters:   [],
+      suggestionsLoading:  false,
       followingSet:        new Set(),   // kept for firehose filtering
       firehoseOn:          false,
       firehoseStream:      null,
@@ -688,6 +690,8 @@ const HomeView = {
       this.loading   = true;
       this.emptyFeed = false;
       this.twists    = [];
+      this.suggestedTwisters = [];
+      this.suggestionsLoading = false;
       this.page      = 1;
       this.followingSet = new Set();
       this._trendDetector.reset();
@@ -698,6 +702,7 @@ const HomeView = {
         const following = await fetchFollowing(this.username);
         if (following.length === 0) {
           this.emptyFeed = true;
+          await this.loadSuggestedTwisters();
           this.loading   = false;
           return;
         }
@@ -744,6 +749,27 @@ const HomeView = {
         this.notify("Could not load home feed.", "error");
       }
       this.loading = false;
+    },
+
+    async loadSuggestedTwisters() {
+      this.suggestionsLoading = true;
+      try {
+        const result = await fetchRecentPosts(120);
+        const posts = Array.isArray(result) ? result : (result.posts || []);
+        const counts = new Map();
+        for (const post of posts) {
+          const author = (post && post.author ? String(post.author) : "").trim().toLowerCase();
+          if (!author || author === this.username) continue;
+          counts.set(author, (counts.get(author) || 0) + 1);
+        }
+        this.suggestedTwisters = [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([name, count]) => ({ name, count }));
+      } catch {
+        this.suggestedTwisters = [];
+      }
+      this.suggestionsLoading = false;
     },
 
     async handlePost(message) {
@@ -923,6 +949,27 @@ const HomeView = {
         <div style="color:#9b8db0;font-size:14px;margin-bottom:14px;">
           Follow some Twisters to see their twists here.
         </div>
+
+        <div class="sb-suggestion-panel">
+          <div class="sb-suggestion-title">Suggested Twisters to Follow</div>
+
+          <div v-if="suggestionsLoading" class="sb-suggest-loading">Finding active Twisters…</div>
+
+          <template v-else-if="suggestedTwisters.length">
+            <a
+              v-for="item in suggestedTwisters"
+              :key="item.name"
+              :href="'#/@' + item.name"
+              class="sb-suggest-row"
+            >
+              <span style="font-weight:600;">@{{ item.name }}</span>
+              <span style="color:#5a4e70;font-size:12px;">{{ item.count }} recent twists</span>
+            </a>
+          </template>
+
+          <div v-else class="sb-suggest-loading">No suggestions yet — try Explore.</div>
+        </div>
+
         <a href="#/explore" class="sb-link">
           Discover Twisters on Explore →
         </a>

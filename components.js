@@ -1306,15 +1306,35 @@ const UserProfileComponent = {
 };
 
 // ---- LoadingSpinnerComponent ----
-// Simple centred loading indicator. Show while async data is being fetched.
+// Skeleton-based loading placeholders for async views.
 const LoadingSpinnerComponent = {
   name: "LoadingSpinnerComponent",
   props: {
-    message: { type: String, default: "Loading..." }
+    message: { type: String, default: "Loading..." },
+    count:   { type: Number, default: 3 }
+  },
+  computed: {
+    rows() {
+      const total = Number.isFinite(this.count) ? Math.max(1, Math.floor(this.count)) : 3;
+      return Array.from({ length: total }, (_, i) => i);
+    }
   },
   template: `
-    <div class="sb-loading-wrap">
-      <div class="sb-loading-spinner spin-ring"></div>
+    <div class="sb-loading-wrap sb-skeleton-wrap">
+      <div
+        v-for="row in rows"
+        :key="row"
+        class="sb-skeleton-card"
+        aria-hidden="true"
+      >
+        <div class="sb-skeleton-top">
+          <span class="sb-skeleton-avatar"></span>
+          <span class="sb-skeleton-line sb-skeleton-line--short"></span>
+        </div>
+        <div class="sb-skeleton-line"></div>
+        <div class="sb-skeleton-line sb-skeleton-line--mid"></div>
+        <div class="sb-skeleton-line sb-skeleton-line--tiny"></div>
+      </div>
       <p class="sb-loading-text">{{ message }}</p>
     </div>
   `
