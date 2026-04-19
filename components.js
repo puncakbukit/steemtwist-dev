@@ -1175,7 +1175,8 @@ const UserProfileComponent = {
   props: {
     profileData: Object,
     // Optional: pass twist count from the parent view
-    twistCount:  { type: Number, default: null }
+    twistCount:  { type: Number, default: null },
+    mutualFollow:{ type: Boolean, default: false }
   },
   computed: {
     joinDate() {
@@ -1232,7 +1233,13 @@ const UserProfileComponent = {
         <!-- Name + username -->
         <div style="margin-bottom:8px;">
           <div style="font-size:18px;font-weight:700;color:#e8e0f0;">{{ profileData.displayName }}</div>
-          <div style="font-size:13px;color:#a855f7;">@{{ profileData.username }}</div>
+          <div style="font-size:13px;color:#a855f7;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span>@{{ profileData.username }}</span>
+            <span
+              v-if="mutualFollow"
+              style="font-size:11px;color:#86efac;background:#0d2418;border:1px solid #166534;border-radius:999px;padding:1px 8px;"
+            >🤝 Mutual Follow</span>
+          </div>
         </div>
 
         <!-- Bio -->
@@ -1358,6 +1365,39 @@ const markedOptions = { breaks: true, gfm: true };
 function renderMarkdown(text) {
   if (!text) return "";
   return marked.parse(text, markedOptions);
+}
+
+// Keep twist cards compact when users attach several large images/videos.
+// If 3-4 media nodes are detected in rendered markdown, collapse them into
+// a 2x2 responsive gallery container.
+function compactMediaGallery(html) {
+  if (!html || typeof window === "undefined" || typeof DOMParser === "undefined") return html || "";
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div id="st-root">${html}</div>`, "text/html");
+    const root = doc.getElementById("st-root");
+    if (!root) return html;
+
+    const mediaNodes = Array.from(root.querySelectorAll("img, video")).slice(0, 4);
+    if (mediaNodes.length < 3) return html;
+
+    const gallery = doc.createElement("div");
+    gallery.className = "st-media-grid";
+
+    mediaNodes.forEach(node => {
+      const clone = node.cloneNode(true);
+      clone.removeAttribute("style");
+      gallery.appendChild(clone);
+      const wrapper = node.closest("p");
+      if (wrapper && wrapper.childNodes.length === 1) wrapper.remove();
+      else node.remove();
+    });
+
+    root.appendChild(gallery);
+    return root.innerHTML;
+  } catch {
+    return html;
+  }
 }
 
 // Strip the SteemTwist back-link appended by buildZeroPayoutOps before
@@ -2962,7 +3002,8 @@ const LiveTwistComponent = {
     return {
       running:    false,
       error:      "",
-      iframeKey:  0   // increment to force iframe recreation on re-run
+      iframeKey:  0,   // increment to force iframe recreation on re-run
+      debugOpen:  false
     };
   },
   computed: {
@@ -2989,6 +3030,9 @@ const LiveTwistComponent = {
     },
     codeSize(){ return new TextEncoder().encode(this.code).length; },
     tooBig()  { return this.codeSize > 10240; },   // 10 KB limit
+    isAuthor() {
+      return !!this.username && this.username === this.post.author;
+    },
     // The srcdoc injected into the sandboxed iframe.
     // DOMPurify is inlined so the iframe never needs to load external scripts.
     sandboxDoc() {
@@ -3014,7 +3058,7 @@ const LiveTwistComponent = {
   #_console { margin-top:8px; padding:6px; background:#0a0616;
               border-radius:6px; font-family:monospace; font-size:12px;
               color:#9b8db0; max-height:80px; overflow-y:auto;
-              border:1px solid #2e1060; display:none; }
+              border:1px solid #2e1060; display:${this.debugOpen ? "block" : "none"}; }
 </style>
 </head>
 <body>
@@ -3179,6 +3223,10 @@ ${'<'}/script>
       this.running = true;
       this.iframeKey++;  // forces Vue to recreate the iframe element
     },
+    toggleDebug() {
+      this.debugOpen = !this.debugOpen;
+      if (this.running) this.iframeKey++;
+    },
 
     stop() {
       this.running  = false;
@@ -3235,11 +3283,25 @@ ${'<'}/script>
         <div style="display:flex;align-items:center;gap:6px;">
           <span style="font-size:14px;">⚡</span>
           <span style="font-size:13px;font-weight:600;color:#c084fc;">{{ title }}</span>
-          <span style="font-size:11px;color:#5a4e70;">Live Twist</span>
+          <span style="font-size:11px;color:var(--text-faint);">Live Twist</span>
+          <button
+            v-if="isAuthor"
+            @click="toggleDebug"
+            :style="{
+              background: debugOpen ? '#2e2050' : '#1a1030',
+              color: debugOpen ? '#c084fc' : '#9b8db0',
+              border: '1px solid #2e2050',
+              borderRadius: '999px',
+              padding: '1px 8px',
+              fontSize: '10px',
+              margin: 0
+            }"
+            title="Toggle debug console visibility"
+          >🐞 Debug</button>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
           <span v-if="tooBig" style="font-size:11px;color:#fca5a5;">⚠ Too large</span>
-          <span v-else style="font-size:11px;color:#5a4e70;">{{ (codeSize/1024).toFixed(1) }} KB</span>
+          <span v-else style="font-size:11px;color:var(--text-faint);">{{ (codeSize/1024).toFixed(1) }} KB</span>
           <button
             v-if="!running"
             @click="run"
@@ -3287,7 +3349,7 @@ ${'<'}/script>
 
       <!-- Idle placeholder -->
       <div v-else style="
-        padding:12px;font-size:13px;color:#5a4e70;font-style:italic;
+        padding:12px;font-size:13px;color:var(--text-faint);font-style:italic;
       ">
         Click ▶ Run to execute this Live Twist in a secure sandbox.
       </div>
@@ -3350,6 +3412,7 @@ const TwistCardComponent = {
       isReplying:      false,
       isVoting:        false,
       hasVoted:        false,
+      hadVoteBeforeTx: false,
       isRetwisting:    false,
       hasRetwisted:    false,
       replyCount:      this.post.children || 0,
@@ -3422,7 +3485,8 @@ const TwistCardComponent = {
       const count = votes.length > 0
         ? votes.filter(v => v.percent > 0).length
         : Math.max(0, this.post.net_votes || 0);
-      return count + (this.hasVoted ? 1 : 0);
+      const alreadyCounted = this.username && votes.some(v => v.voter === this.username && v.percent > 0);
+      return count + (this.hasVoted && !alreadyCounted ? 1 : 0);
     },
     canAct() {
       return !!this.username && this.hasKeychain;
@@ -3448,19 +3512,21 @@ const TwistCardComponent = {
       return stripBackLink(this.post.body).slice(0, PREVIEW_LENGTH) + "…";
     },
     bodyHtml() {
-      if (this.isSecretTwist) return "<em style='color:#5a4e70'>🔒 Secret Twist — view in Private Signals</em>";
+      if (this.isSecretTwist) return "<em style='color:var(--text-faint)'>🔒 Secret Twist — view in Private Signals</em>";
       if (this.isLiveTwist)   return "";   // rendered by LiveTwistComponent
-      return DOMPurify.sanitize(renderMarkdown(stripBackLink(this.editedBody !== null ? this.editedBody : this.post.body)));
+      const rendered = DOMPurify.sanitize(renderMarkdown(stripBackLink(this.editedBody !== null ? this.editedBody : this.post.body)));
+      return compactMediaGallery(rendered);
     },
     bodyPreviewHtml() {
-      if (this.isSecretTwist) return "<em style='color:#5a4e70'>🔒 Secret Twist — view in Private Signals</em>";
+      if (this.isSecretTwist) return "<em style='color:var(--text-faint)'>🔒 Secret Twist — view in Private Signals</em>";
       if (this.isLiveTwist)   return "";
-      return DOMPurify.sanitize(renderMarkdown(stripBackLink(this.editedBody !== null ? this.editedBody : this.post.body).slice(0, PREVIEW_LENGTH) + "…"));
+      const rendered = DOMPurify.sanitize(renderMarkdown(stripBackLink(this.editedBody !== null ? this.editedBody : this.post.body).slice(0, PREVIEW_LENGTH) + "…"));
+      return compactMediaGallery(rendered);
     },
     replyPreviewHtml() {
       return this.replyText.trim()
         ? DOMPurify.sanitize(renderMarkdown(this.replyText))
-        : "<em style='color:#5a4e70'>Nothing to preview.</em>";
+        : "<em style='color:var(--text-faint)'>Nothing to preview.</em>";
     },
     replyCharCount() { return countTwistCharsExcludingMedia(this.replyText); },
     replyOverLimit() { return this.replyCharCount > 280; },
@@ -3493,13 +3559,15 @@ const TwistCardComponent = {
     ...LIVE_TWIST_HANDLER_MIXIN,
     vote() {
       if (!this.canAct || this.isVoting || this.hasVoted) return;
+      this.hadVoteBeforeTx = this.hasVoted;
+      this.hasVoted = true;
       this.isVoting = true;
       voteTwist(this.username, this.post.author, this.post.permlink, 10000, (res) => {
         this.isVoting = false;
         if (res.success) {
-          this.hasVoted = true;
           this.$emit("voted", this.post);
         } else {
+          this.hasVoted = this.hadVoteBeforeTx;
           this.lastError = res.error || res.message || "Twist love failed.";
         }
       });
@@ -3786,13 +3854,20 @@ const TwistCardComponent = {
     },
     toggleMoreActions() {
       this.showMoreActions = !this.showMoreActions;
+    },
+    handleOutsideClick(event) {
+      const menuWrap = this.$refs.moreActionsWrap;
+      if (!menuWrap || !this.showMoreActions) return;
+      if (!menuWrap.contains(event.target)) this.showMoreActions = false;
     }
   },
   mounted() {
     window.addEventListener("message", this.onLiveReplyPreviewMessage);
+    document.addEventListener("click", this.handleOutsideClick);
   },
   unmounted() {
     window.removeEventListener("message", this.onLiveReplyPreviewMessage);
+    document.removeEventListener("click", this.handleOutsideClick);
   },
   template: `
     <div class="sb-card sb-post-card">
@@ -3810,11 +3885,11 @@ const TwistCardComponent = {
             :href="'#/@' + post.author"
             style="font-weight:bold;color:#a855f7;text-decoration:none;font-size:14px;"
           >@{{ post.author }}</a>
-          <div style="font-size:12px;color:#5a4e70;">
+          <div style="font-size:12px;color:var(--text-faint);">
             <a
               :href="twistUrl"
               :title="absoluteTime"
-              style="color:#5a4e70;text-decoration:none;"
+              style="color:var(--text-faint);text-decoration:none;"
             >{{ relativeTime }}</a>
           </div>
         </div>
@@ -3910,7 +3985,7 @@ const TwistCardComponent = {
         >🔗</a>
 
         <!-- More menu for secondary actions -->
-        <div v-if="isOwnPost && hasKeychain" style="position:relative;">
+        <div v-if="isOwnPost && hasKeychain" ref="moreActionsWrap" style="position:relative;">
           <button
             @click="toggleMoreActions"
             :style="{
@@ -4285,6 +4360,7 @@ const LiveTwistComposerComponent = {
       title:        draft.title || "",
       body:         draft.body  || "",
       code:         draft.code  || "",
+      monoSpacing:  true,
       activeTab:      "code",  // "code" | "preview" | "templates"
       templateSubTab: "simple", // "simple" | "greetings" | "queries" | "actions"
       previewKey:  0,
@@ -4407,6 +4483,18 @@ const LiveTwistComposerComponent = {
       this.title     = tpl.name;
       this.body      = tpl.desc || "";
       this.activeTab = "code";
+    },
+    onCodeEditorKeydown(event) {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      const ta = event.target;
+      const start = ta.selectionStart ?? this.code.length;
+      const end = ta.selectionEnd ?? this.code.length;
+      const indent = "  ";
+      this.code = this.code.slice(0, start) + indent + this.code.slice(end);
+      this.$nextTick(() => {
+        ta.selectionStart = ta.selectionEnd = start + indent.length;
+      });
     }
   },
   mounted()   { window.addEventListener("message", this.onMessage); },
@@ -4452,11 +4540,26 @@ const LiveTwistComposerComponent = {
           :style="{ background: activeTab==='templates' ? '#2e2050' : 'none', color: activeTab==='templates' ? '#22d3ee' : '#9b8db0', border:'1px solid #2e2050', borderRadius:'6px 6px 0 0', padding:'4px 14px', fontSize:'12px', margin:0, cursor:'pointer' }">&#128196; Templates</button>
       </div>
 
+      <div style="display:flex;align-items:center;justify-content:flex-end;margin:6px 0 8px;">
+        <label style="font-size:12px;color:#9b8db0;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" v-model="monoSpacing" />
+          Mono-spacing
+        </label>
+      </div>
+
       <!-- Code editor -->
       <textarea v-show="activeTab === 'code'" v-model="code"
         placeholder="// app.render(html) — render HTML&#10;// app.text(str)  — render plain text&#10;// app.resize(px) — resize iframe&#10;// app.log(...)   — console output&#10;&#10;// Example: click counter&#10;// let n=0;&#10;// function draw(){&#10;//   app.render('&lt;button id=b&gt;Clicks: '+n+'&lt;/button&gt;');&#10;//   document.getElementById('b').onclick=()=>{n++;draw();}&#10;// }&#10;// draw();"
         spellcheck="false"
-        style="width:100%;box-sizing:border-box;padding:10px;border-radius:0 8px 8px 8px;border:1px solid #2e2050;background:#0a0616;color:#e8e0f0;font-size:13px;font-family:monospace;resize:vertical;min-height:160px;line-height:1.5;"></textarea>
+        @keydown="onCodeEditorKeydown"
+        :style="{
+          width:'100%', boxSizing:'border-box', padding:'10px',
+          borderRadius:'0 8px 8px 8px', border:'1px solid #2e2050',
+          background:'#0a0616', color:'#e8e0f0', fontSize:'13px',
+          fontFamily: monoSpacing ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'Segoe UI, Arial, sans-serif',
+          resize:'vertical', minHeight:'160px', lineHeight:'1.5',
+          letterSpacing: monoSpacing ? '0.01em' : 'normal'
+        }"></textarea>
 
       <!-- Preview iframe -->
       <div v-if="activeTab === 'preview'" style="border-radius:0 8px 8px 8px;border:1px solid #2e2050;overflow:hidden;">

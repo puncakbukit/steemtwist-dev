@@ -3,7 +3,7 @@
 // Vue 3 + Vue Router 4 application entry point.
 // ============================================================
 
-const { createApp, ref, onMounted, provide } = Vue;
+const { createApp, ref, onMounted, onUnmounted, provide, computed } = Vue;
 const { createRouter, createWebHashHistory, useRoute }                = VueRouter;
 
 function postKey(post) {
@@ -1037,6 +1037,7 @@ const ProfileView = {
       // Trend detection
       _trendDetector: null,
       trends:         [],
+      mutualFollow:   false,
     };
   },
 
@@ -1090,6 +1091,7 @@ const ProfileView = {
       this.page     = 1;
       this.userTwists  = [];
       this.profileData = null;
+      this.mutualFollow = false;
 
       // When navigating to a different profile, swap the detector so the new
       // context gets its own IDB namespace and accumulated baseline.
@@ -1113,15 +1115,23 @@ const ProfileView = {
           ? fetchPostsByUser(user, 50)   // now returns { posts, nextCursor }
           : fetchTwistsByUser(user, null, { limit: 50 });
 
-        const [profile, result, pinned] = await Promise.all([
+        const relationPromise = (this.username && user && this.username !== user)
+          ? Promise.all([fetchFollowing(this.username), fetchFollowing(user)])
+          : Promise.resolve(null);
+        const [profile, result, pinned, relation] = await Promise.all([
           fetchAccount(user),
           twistsPromise,
-          pinPromise
+          pinPromise,
+          relationPromise
         ]);
         this.profileData = profile;
         this.userTwists  = result.posts;
         this.nextCursor  = result.nextCursor;
         this.pinnedTwist = pinned;
+        if (relation && Array.isArray(relation[0]) && Array.isArray(relation[1])) {
+          const [mine, theirs] = relation;
+          this.mutualFollow = mine.includes(user) && theirs.includes(this.username);
+        }
         this._trendDetector.ingestPosts(result.posts);
         this._refreshTrends();
       } catch {
@@ -1180,6 +1190,7 @@ const ProfileView = {
         <user-profile-component
           :profile-data="profileData"
           :twist-count="userTwists.length"
+          :mutual-follow="mutualFollow"
         ></user-profile-component>
 
         <!-- Trending widget — collapsed by default on profile, unobtrusive -->
@@ -1343,11 +1354,11 @@ const TwistView = {
 
       <!-- Back navigation -->
       <div style="margin-bottom:14px;">
-        <a
-          href="#"
-          @click.prevent="$router.back()"
-          style="color:#a855f7;text-decoration:none;font-size:14px;font-weight:600;"
-        >← Back</a>
+        <button
+          type="button"
+          @click="$router.back()"
+          style="background:none;border:none;padding:0;margin:0;color:#a855f7;text-decoration:none;font-size:14px;font-weight:600;"
+        >← Back</button>
       </div>
 
       <loading-spinner-component v-if="loading" message="Loading twist…"></loading-spinner-component>
@@ -2300,6 +2311,11 @@ const App = {
     const notification  = ref({ message: "", type: "error" });
     const profileData   = ref(null);   // logged-in user's profile, fetched on login/mount
     const currentRoute  = useRoute();
+    const headerCollapsed = ref(false);
+    const canCollapseHeader = computed(() => {
+      const path = currentRoute.path || "";
+      return path === "/" || path === "/feed" || path.startsWith("/explore");
+    });
 
     function notify(message, type = "error") {
       notification.value = { message, type };
@@ -2314,6 +2330,14 @@ const App = {
     async function loadProfile(user) {
       const target = user || TWIST_CONFIG.ROOT_ACCOUNT;
       profileData.value = await fetchAccount(target).catch(() => null);
+    }
+
+    function updateHeaderCollapse() {
+      if (!canCollapseHeader.value) {
+        headerCollapsed.value = false;
+        return;
+      }
+      headerCollapsed.value = window.scrollY > 56;
     }
 
     onMounted(() => {
@@ -2341,6 +2365,11 @@ const App = {
           }
         }
       }, 100);
+      updateHeaderCollapse();
+      window.addEventListener("scroll", updateHeaderCollapse, { passive: true });
+    });
+    onUnmounted(() => {
+      window.removeEventListener("scroll", updateHeaderCollapse);
     });
 
     function login(user) {
@@ -2424,7 +2453,8 @@ const App = {
       notification, notify, dismissNotification,
       login, logout, profileData, currentRoute,
       unreadSignals, refreshUnreadSignals,
-      understreamOn, toggleUnderstream
+      understreamOn, toggleUnderstream,
+      headerCollapsed, canCollapseHeader
     };
   },
 
@@ -2432,7 +2462,10 @@ const App = {
     <!-- ═══════════════════════════════════════════════════════
          GLOBAL HEADER — cover image + nav bar + profile strip
     ══════════════════════════════════════════════════════════ -->
-    <div style="position:relative;overflow:hidden;">
+    <div
+      :class="{ 'st-header-compact': canCollapseHeader && headerCollapsed }"
+      style="position:relative;overflow:hidden;"
+    >
 
       <!-- Cover layer: user cover image, falls back to gradient.
            coverImage is already sanitized to https/http only by fetchAccount,
@@ -2542,7 +2575,7 @@ const App = {
         position:relative;z-index:2;
         padding:0 20px 16px;
         display:flex;align-items:flex-end;gap:14px;
-      ">
+      " :style="canCollapseHeader && headerCollapsed ? { padding: '0 16px 8px', gap: '10px' } : null">
         <!-- Avatar -->
         <a :href="username ? '#/@' + username : '#/@' + profileData.username"
            style="text-decoration:none;flex-shrink:0;">
@@ -2554,6 +2587,7 @@ const App = {
               background:#1a1030;
               box-shadow:0 0 20px rgba(168,85,247,0.5);
             "
+            :style="canCollapseHeader && headerCollapsed ? { width: '44px', height: '44px', borderWidth: '2px' } : null"
             @error="$event.target.src='https://steemitimages.com/u/steemtwist/avatar'"
           />
         </a>
@@ -2564,10 +2598,11 @@ const App = {
                       text-shadow:0 1px 6px rgba(0,0,0,0.5);line-height:1.2;">
             {{ profileData.displayName }}
           </div>
-          <div style="font-size:13px;color:#e0d0ff;margin-top:1px;">
+          <div style="font-size:13px;color:#e0d0ff;margin-top:1px;"
+               :style="canCollapseHeader && headerCollapsed ? { fontSize:'12px' } : null">
             @{{ username || profileData.username }}
           </div>
-          <div v-if="profileData.about"
+          <div v-if="profileData.about && !(canCollapseHeader && headerCollapsed)"
                style="font-size:13px;color:#c0b0e0;margin-top:3px;
                       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px;">
             {{ profileData.about }}
