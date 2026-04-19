@@ -138,6 +138,21 @@ const draftStorage = {
   }
 };
 
+// ---- Avatar fallback (Bug 7) ----
+// A self-contained base64-like data URI used as the absolute last resort when
+// steemitimages.com is unreachable. Defined as a JS constant so it can be
+// safely referenced from Vue template @error handlers without quote-escaping
+// issues.  The SVG is fully URL-encoded so it contains no single or double
+// quotes — safe to embed in any attribute context.
+const AVATAR_FALLBACK_URI =
+  "data:image/svg+xml," +
+  "%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22" +
+  "%20width%3D%2240%22%20height%3D%2240%22%20viewBox%3D%220%200%2040%2040%22%3E" +
+  "%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%232e2050%22%2F%3E" +
+  "%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%227%22%20fill%3D%22%235a4e70%22%2F%3E" +
+  "%3Cellipse%20cx%3D%2220%22%20cy%3D%2234%22%20rx%3D%2212%22%20ry%3D%228%22%20fill%3D%22%235a4e70%22%2F%3E" +
+  "%3C%2Fsvg%3E";
+
 // ---- Live Twist Templates ----
 const LIVE_TWIST_TEMPLATES = [
   { id: "poll", icon: "\ud83d\uddf3\ufe0f", name: "Poll", desc: "Local interactive poll \u2014 vote tracked in memory",
@@ -1223,7 +1238,7 @@ const UserProfileComponent = {
           <img
             :src="safeAvatarUrl(profileData.username)"
             style="width:72px;height:72px;border-radius:50%;border:3px solid #2e2050;background:#0f0a1e;flex-shrink:0;"
-            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+            @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
           />
           <!-- Reputation badge -->
           <div style="
@@ -1779,7 +1794,7 @@ const ReplyCardComponent = {
           <img
             :src="avatarUrl"
             style="width:28px;height:28px;border-radius:50%;border:2px solid #2e2050;"
-            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+            @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
           />
         </a>
 
@@ -4009,7 +4024,7 @@ const TwistCardComponent = {
           <img
             :src="avatarUrl"
             style="width:40px;height:40px;border-radius:50%;border:2px solid #2e2050;"
-            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+            @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
           />
         </a>
         <div>
@@ -5206,7 +5221,7 @@ const SignalItemComponent = {
         <img
           :src="'https://steemitimages.com/u/' + signal.actor + '/avatar/small'"
           style="width:36px;height:36px;border-radius:50%;border:2px solid #2e2050;"
-          @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+          @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
         />
       </a>
 
@@ -5323,7 +5338,7 @@ const UserRowComponent = {
       <img
         :src="'https://steemitimages.com/u/' + username + '/avatar/small'"
         style="width:40px;height:40px;border-radius:50%;border:2px solid #2e2050;flex-shrink:0;"
-        @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+        @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
       />
 
       <!-- Name + username + bio -->
@@ -5798,7 +5813,7 @@ const SecretTwistCardComponent = {
           <img
             :src="avatarUrl"
             style="width:40px;height:40px;border-radius:50%;border:2px solid #3b1f5e;"
-            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
+            @error="$event.target.onerror=null;$event.target.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'"
           />
         </a>
         <div style="flex:1;min-width:0;">
