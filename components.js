@@ -2829,7 +2829,7 @@ const LIVE_TWIST_HANDLER_MIXIN = {
       const safeActionAmount = (v) => {
         // Bug 6 fix: force-coerce through parseFloat so the Live Twist cannot
         // control the visual formatting of the number shown in the modal.
-        // e.g. "1000.000 STEEM" or "0.001 …1000" collapse to a clean decimal.
+        // e.g. "1000.000 STEEM" or "0.001...1000" collapse to a clean decimal.
         const stripped = String(v).replace(/[^0-9.]/g, "");
         const parsed = parseFloat(stripped);
         if (!isFinite(parsed) || parsed < 0) return "0";
