@@ -212,10 +212,17 @@ const ExploreView = {
     await this.loadFeed(true);
   },
 
+  mounted() {
+    // B: Infinite scroll — watch the sentinel element at the end of the list.
+    this._setupInfiniteScroll();
+  },
+
   unmounted() {
     this.stopFirehose();
     this._stopDecayTimer();
     if (this._trendDetector) this._trendDetector.destroy();
+    // B: Disconnect the IntersectionObserver to avoid leaks.
+    if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
   },
 
   methods: {
@@ -419,6 +426,29 @@ const ExploreView = {
       }
       this._stopDecayTimer();
       this.firehoseOn = false;
+    },
+
+    // B: Infinite scroll — create an IntersectionObserver on the sentinel div
+    // rendered after the last card. When it enters the viewport:
+    //  • If there are more paged items, advance the page counter (instant, no fetch).
+    //  • If all in-memory posts are shown AND older content exists, load it from chain.
+    _setupInfiniteScroll() {
+      if (typeof IntersectionObserver === "undefined") return;
+      this._scrollObserver = new IntersectionObserver(
+        (entries) => {
+          if (!entries[0].isIntersecting) return;
+          if (this.hasMore) {
+            this.page++;
+          } else if (this.canLoadOlder && !this.loadingOlderMonth) {
+            this.loadOlderMonth();
+          }
+        },
+        { rootMargin: "200px" }
+      );
+      this.$nextTick(() => {
+        const sentinel = this.$refs.scrollSentinel;
+        if (sentinel) this._scrollObserver.observe(sentinel);
+      });
     }
   },
 
@@ -563,19 +593,14 @@ const ExploreView = {
           @deleted="p => twists = twists.filter(t => t.permlink !== p.permlink)"
         ></twist-card-component>
 
-        <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0 || canLoadOlder" class="sb-pagination">
-          <button
-            v-if="hasMore"
-            @click="page++"
-            class="sb-pill-btn"
-          >Load more</button>
-          <button
-            v-if="canLoadOlder"
-            @click="loadOlderMonth"
-            :disabled="loadingOlderMonth"
-            class="sb-pill-btn"
-          >{{ loadingOlderMonth ? "Loading…" : (understreamOn ? "Load more posts" : "Load older months") }}</button>
+        <!-- B: Infinite scroll sentinel — replaces the "Load more" button.
+             The IntersectionObserver in _setupInfiniteScroll() watches this element
+             and auto-advances the page or fetches older months when it enters view. -->
+        <div ref="scrollSentinel" style="height:1px;"></div>
+
+        <!-- Fallback: manual "Load older months" only while actively fetching -->
+        <div v-if="loadingOlderMonth" class="sb-pagination">
+          <span class="sb-pill-btn" style="opacity:0.6;cursor:default;">Loading…</span>
         </div>
       </template>
 
@@ -630,10 +655,16 @@ const HomeView = {
     await this.loadFeed();
   },
 
+  mounted() {
+    // B: Infinite scroll for the home feed
+    this._setupInfiniteScroll();
+  },
+
   unmounted() {
     this.stopFirehose();
     this._stopDecayTimer();
     if (this._trendDetector) this._trendDetector.destroy();
+    if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
   },
 
   watch: {
@@ -844,6 +875,26 @@ const HomeView = {
       if (this.firehoseStream) { this.firehoseStream.stop(); this.firehoseStream = null; }
       this._stopDecayTimer();
       this.firehoseOn = false;
+    },
+
+    // B: Infinite scroll helper (same pattern as ExploreView)
+    _setupInfiniteScroll() {
+      if (typeof IntersectionObserver === "undefined") return;
+      this._scrollObserver = new IntersectionObserver(
+        (entries) => {
+          if (!entries[0].isIntersecting) return;
+          if (this.hasMore) {
+            this.page++;
+          } else if (this.canLoadOlder && !this.loadingOlderMonth) {
+            this.loadOlderMonth();
+          }
+        },
+        { rootMargin: "200px" }
+      );
+      this.$nextTick(() => {
+        const sentinel = this.$refs.scrollSentinel;
+        if (sentinel) this._scrollObserver.observe(sentinel);
+      });
     }
   },
 
@@ -995,19 +1046,10 @@ const HomeView = {
           @deleted="p => twists = twists.filter(t => t.permlink !== p.permlink)"
         ></twist-card-component>
 
-        <!-- Pagination controls -->
-        <div v-if="sortedTwists.length > 0 || canLoadOlder" class="sb-pagination">
-          <button
-            v-if="hasMore"
-            @click="page++"
-            class="sb-pill-btn"
-          >Load more</button>
-          <button
-            v-if="canLoadOlder"
-            @click="loadOlderMonth"
-            :disabled="loadingOlderMonth"
-            class="sb-pill-btn"
-          >{{ loadingOlderMonth ? "Loading…" : "Load older months" }}</button>
+        <!-- B: Infinite scroll sentinel -->
+        <div ref="scrollSentinel" style="height:1px;"></div>
+        <div v-if="loadingOlderMonth" class="sb-pagination">
+          <span class="sb-pill-btn" style="opacity:0.6;cursor:default;">Loading…</span>
         </div>
       </template>
 

@@ -1462,6 +1462,9 @@ const ReplyCardComponent = {
       liveReplyIframeHeight: 200,
       isUploadingReplyImage: false,
       replyUploadError: "",
+      // D: Pending image alt-text for reply composer
+      pendingReplyImageUrl: null,
+      pendingReplyImageAlt: "",
       isReplying:    false,
       isVoting:      false,
       hasVoted:      false,
@@ -1984,10 +1987,39 @@ const ReplyCardComponent = {
               <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
               <button
                 @click="$refs.replyImageInput.click()"
-                :disabled="isUploadingReplyImage || !canUploadReplyImage"
-                style="padding:3px 10px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:11px;"
+                :disabled="isUploadingReplyImage || !canUploadReplyImage || !!pendingReplyImageUrl"
+                style="padding:3px 10px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:11px;min-height:44px;"
               >{{ isUploadingReplyImage ? "Uploading…" : "📷 Upload image" }}</button>
               <span v-if="replyUploadError" style="font-size:11px;color:#fca5a5;">{{ replyUploadError }}</span>
+            </div>
+            <!-- D: Alt-text confirmation panel for reply images -->
+            <div v-if="pendingReplyImageUrl" style="
+              margin-top:6px;padding:8px 10px;border-radius:8px;
+              background:#0e1a2d;border:1px solid #1e3a5f;
+            ">
+              <label style="font-size:11px;color:#93c5fd;display:block;margin-bottom:3px;font-weight:600;">
+                🖼 Image description for screen readers
+              </label>
+              <input
+                v-model="pendingReplyImageAlt"
+                type="text"
+                placeholder="e.g. Chart showing weekly upvotes"
+                maxlength="200"
+                style="
+                  width:100%;box-sizing:border-box;padding:5px 7px;border-radius:6px;
+                  border:1px solid #1e3a5f;background:#0f0a1e;color:#e8e0f0;
+                  font-size:12px;margin-bottom:6px;
+                "
+                @keydown.enter.prevent="insertPendingReplyImage"
+                @keydown.escape.prevent="cancelPendingReplyImage"
+              />
+              <div style="display:flex;gap:6px;">
+                <button @click="insertPendingReplyImage"
+                  style="padding:3px 12px;font-size:11px;margin:0;min-height:36px;">Insert</button>
+                <button @click="cancelPendingReplyImage"
+                  style="padding:3px 10px;font-size:11px;margin:0;min-height:36px;
+                         background:#1e1535;border:1px solid #2e2050;color:#9b8db0;">Discard</button>
+              </div>
             </div>
             <div
               v-show="replyPreviewMode"
@@ -3000,10 +3032,17 @@ const LiveTwistComponent = {
   },
   data() {
     return {
-      running:    false,
-      error:      "",
-      iframeKey:  0,   // increment to force iframe recreation on re-run
-      debugOpen:  false
+      running:            false,
+      error:              "",
+      iframeKey:          0,   // increment to force iframe recreation on re-run
+      debugOpen:          false,
+      // C: Auto-stop when the card scrolls out of view
+      autoStopOnScrollOut: true,
+      _visibilityObserver: null,
+      // C: Track how long the sandbox has been running (shown in the header)
+      runStartTime:       null,
+      _runTimer:          null,
+      runSeconds:         0,
     };
   },
   computed: {
@@ -3219,9 +3258,17 @@ ${'<'}/script>
         this.error = "Live Twist code exceeds the 10 KB size limit.";
         return;
       }
-      this.error   = "";
-      this.running = true;
+      this.error      = "";
+      this.running    = true;
+      this.runSeconds = 0;
+      this.runStartTime = Date.now();
       this.iframeKey++;  // forces Vue to recreate the iframe element
+      // C: Start the elapsed-time ticker (updates every second)
+      this._runTimer = setInterval(() => {
+        this.runSeconds = Math.floor((Date.now() - this.runStartTime) / 1000);
+      }, 1000);
+      // C: Attach visibility observer AFTER Vue renders the iframe
+      this.$nextTick(() => this._attachVisibilityObserver());
     },
     toggleDebug() {
       this.debugOpen = !this.debugOpen;
@@ -3229,8 +3276,30 @@ ${'<'}/script>
     },
 
     stop() {
-      this.running  = false;
+      this.running    = false;
+      this.runSeconds = 0;
       this.iframeKey++;
+      // C: Clean up the elapsed-time ticker and scroll observer
+      if (this._runTimer) { clearInterval(this._runTimer); this._runTimer = null; }
+      if (this._visibilityObserver) { this._visibilityObserver.disconnect(); this._visibilityObserver = null; }
+    },
+
+    // C: IntersectionObserver that auto-stops the iframe when the card leaves view
+    _attachVisibilityObserver() {
+      if (!this.autoStopOnScrollOut) return;
+      if (typeof IntersectionObserver === "undefined") return;
+      if (this._visibilityObserver) this._visibilityObserver.disconnect();
+      const root = this.$el;
+      if (!root) return;
+      this._visibilityObserver = new IntersectionObserver(
+        (entries) => {
+          if (!entries[0].isIntersecting && this.running) {
+            this.stop();
+          }
+        },
+        { threshold: 0 }   // fire as soon as any part leaves the viewport
+      );
+      this._visibilityObserver.observe(root);
     },
 
     onMessage(e) {
@@ -3268,6 +3337,9 @@ ${'<'}/script>
   },
   unmounted() {
     window.removeEventListener("message", this.onMessage);
+    // C: Always clean up the visibility observer and run timer on destroy
+    if (this._visibilityObserver) { this._visibilityObserver.disconnect(); this._visibilityObserver = null; }
+    if (this._runTimer) { clearInterval(this._runTimer); this._runTimer = null; }
   },
 
   template: `
@@ -3279,8 +3351,9 @@ ${'<'}/script>
       <div style="
         display:flex;align-items:center;justify-content:space-between;
         padding:6px 10px;background:#1a1030;border-bottom:1px solid #2e1060;
+        flex-wrap:wrap;gap:4px;
       ">
-        <div style="display:flex;align-items:center;gap:6px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <span style="font-size:14px;">⚡</span>
           <span style="font-size:13px;font-weight:600;color:#c084fc;">{{ title }}</span>
           <span style="font-size:11px;color:var(--text-faint);">Live Twist</span>
@@ -3294,12 +3367,36 @@ ${'<'}/script>
               borderRadius: '999px',
               padding: '1px 8px',
               fontSize: '10px',
-              margin: 0
+              margin: 0,
+              minHeight: '28px'
             }"
             title="Toggle debug console visibility"
           >🐞 Debug</button>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <!-- C: Elapsed run time indicator -->
+          <span v-if="running" :style="{
+            fontSize: '11px',
+            color: runSeconds >= 30 ? '#fb923c' : (runSeconds >= 10 ? '#fbbf24' : '#4ade80'),
+            fontVariantNumeric: 'tabular-nums'
+          }" title="Sandbox has been running for this many seconds">
+            ⏱ {{ runSeconds }}s
+          </span>
+          <!-- C: Auto-stop on scroll-out toggle -->
+          <button
+            @click="autoStopOnScrollOut = !autoStopOnScrollOut"
+            :style="{
+              background: autoStopOnScrollOut ? '#0e2233' : '#1e1535',
+              color:      autoStopOnScrollOut ? '#22d3ee'  : '#9b8db0',
+              border:     '1px solid ' + (autoStopOnScrollOut ? '#22d3ee' : '#2e2050'),
+              borderRadius: '999px',
+              padding: '1px 8px',
+              fontSize: '10px',
+              margin: 0,
+              minHeight: '28px'
+            }"
+            title="When ON, the sandbox stops automatically when this card scrolls out of view — prevents runaway CPU usage"
+          >{{ autoStopOnScrollOut ? '🛑 Auto-stop ON' : '🛑 Auto-stop OFF' }}</button>
           <span v-if="tooBig" style="font-size:11px;color:#fca5a5;">⚠ Too large</span>
           <span v-else style="font-size:11px;color:var(--text-faint);">{{ (codeSize/1024).toFixed(1) }} KB</span>
           <button
@@ -3310,6 +3407,7 @@ ${'<'}/script>
               background:linear-gradient(135deg,#6d28d9,#e0187a);
               color:#fff;border:none;border-radius:6px;
               padding:3px 12px;font-size:12px;font-weight:600;margin:0;cursor:pointer;
+              min-height:32px;
             "
           >▶ Run</button>
           <button
@@ -3318,6 +3416,7 @@ ${'<'}/script>
             style="
               background:#2d0a0a;color:#fca5a5;border:1px solid #7f1d1d;
               border-radius:6px;padding:3px 12px;font-size:12px;margin:0;cursor:pointer;
+              min-height:32px;
             "
           >■ Stop</button>
         </div>
@@ -3409,6 +3508,9 @@ const TwistCardComponent = {
       liveReplyIframeHeight: 200,
       isUploadingReplyImage: false,
       replyUploadError: "",
+      // D: pending alt-text for reply image
+      pendingReplyImageUrl: null,
+      pendingReplyImageAlt: "",
       isReplying:      false,
       isVoting:        false,
       hasVoted:        false,
@@ -3635,9 +3737,22 @@ const TwistCardComponent = {
           this.lastError = this.replyUploadError;
           return;
         }
-        const alt = makeImageAltText(file.name);
-        this.insertReplyAtCursor(`![${alt}](${res.url})`);
+        // D: Show alt-text panel before inserting
+        this.pendingReplyImageUrl = res.url;
+        this.pendingReplyImageAlt = makeImageAltText(file.name);
       });
+    },
+    // D: Confirm pending reply image
+    insertPendingReplyImage() {
+      if (!this.pendingReplyImageUrl) return;
+      const alt = this.pendingReplyImageAlt.trim() || makeImageAltText(this.pendingReplyImageUrl);
+      this.insertReplyAtCursor(`![${alt}](${this.pendingReplyImageUrl})`);
+      this.pendingReplyImageUrl = null;
+      this.pendingReplyImageAlt = "";
+    },
+    cancelPendingReplyImage() {
+      this.pendingReplyImageUrl = null;
+      this.pendingReplyImageAlt = "";
     },
     runLiveReplyPreview() {
       this.liveReplyTab = "preview";
@@ -3977,10 +4092,11 @@ const TwistCardComponent = {
           :title="hasFlagged ? 'You have already flagged this Live Twist' : 'Flag this Live Twist as harmful'"
         >{{ hasFlagged ? '🚩 Flagged' : '🚩' }}{{ downvoteCount > 0 ? ' ' + downvoteCount : '' }}</button>
 
-        <!-- Permalink -->
+        <!-- Permalink — A: wrapped in touch-target class for 44×44 minimum tap area -->
         <a
           :href="twistUrl"
-          style="margin-left:auto;font-size:12px;color:#2e2050;text-decoration:none;"
+          class="st-touch-target"
+          style="margin-left:auto;font-size:16px;color:#2e2050;text-decoration:none;"
           title="Open twist page"
         >🔗</a>
 
@@ -4219,10 +4335,39 @@ const TwistCardComponent = {
           <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
           <button
             @click="$refs.replyImageInput.click()"
-            :disabled="isUploadingReplyImage || !canUploadReplyImage"
-            style="padding:5px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+            :disabled="isUploadingReplyImage || !canUploadReplyImage || !!pendingReplyImageUrl"
+            style="padding:5px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;min-height:44px;"
           >{{ isUploadingReplyImage ? "Uploading…" : "📷 Upload image" }}</button>
           <span v-if="replyUploadError" style="font-size:12px;color:#fca5a5;">{{ replyUploadError }}</span>
+        </div>
+        <!-- D: Alt-text confirmation panel for reply images -->
+        <div v-if="pendingReplyImageUrl" style="
+          margin-top:6px;padding:10px 12px;border-radius:8px;
+          background:#0e1a2d;border:1px solid #1e3a5f;
+        ">
+          <label style="font-size:12px;color:#93c5fd;display:block;margin-bottom:4px;font-weight:600;">
+            🖼 Image description for screen readers
+          </label>
+          <input
+            v-model="pendingReplyImageAlt"
+            type="text"
+            placeholder="e.g. Screenshot of my wallet balance"
+            maxlength="200"
+            style="
+              width:100%;box-sizing:border-box;padding:6px 8px;border-radius:6px;
+              border:1px solid #1e3a5f;background:#0f0a1e;color:#e8e0f0;
+              font-size:13px;margin-bottom:6px;
+            "
+            @keydown.enter.prevent="insertPendingReplyImage"
+            @keydown.escape.prevent="cancelPendingReplyImage"
+          />
+          <div style="display:flex;gap:6px;">
+            <button @click="insertPendingReplyImage"
+              style="padding:5px 14px;font-size:12px;margin:0;min-height:36px;">Insert</button>
+            <button @click="cancelPendingReplyImage"
+              style="padding:5px 12px;font-size:12px;margin:0;min-height:36px;
+                     background:#1e1535;border:1px solid #2e2050;color:#9b8db0;">Discard</button>
+          </div>
         </div>
         <div
           v-show="replyPreviewMode"
@@ -4707,7 +4852,10 @@ const TwistComposerComponent = {
       message:      draft.message      || "",
       previewMode:  false,
       isUploadingImage: false,
-      uploadError: ""
+      uploadError: "",
+      // D: After a successful upload, hold the URL here until the user confirms alt text
+      pendingImageUrl:  null,
+      pendingImageAlt:  "",
     };
   },
   computed: {
@@ -4778,10 +4926,24 @@ const TwistComposerComponent = {
           this.notify(this.uploadError, "error");
           return;
         }
-        const alt = makeImageAltText(file.name);
-        this.insertAtCursor(`![${alt}](${res.url})`);
-        this.notify("Image uploaded and inserted.", "success");
+        // D: Instead of immediately inserting, show the alt-text input panel.
+        // Pre-fill with a sanitised filename so there is always a useful fallback.
+        this.pendingImageUrl = res.url;
+        this.pendingImageAlt = makeImageAltText(file.name);
+        this.notify("Image uploaded — add a description then click Insert.", "info");
       });
+    },
+    // D: Called when the user confirms (or skips) the alt text prompt
+    insertPendingImage() {
+      if (!this.pendingImageUrl) return;
+      const alt = this.pendingImageAlt.trim() || makeImageAltText(this.pendingImageUrl);
+      this.insertAtCursor(`![${alt}](${this.pendingImageUrl})`);
+      this.pendingImageUrl = null;
+      this.pendingImageAlt = "";
+    },
+    cancelPendingImage() {
+      this.pendingImageUrl = null;
+      this.pendingImageAlt = "";
     },
     submit() {
       if (this.overLimit) {
@@ -4887,11 +5049,49 @@ const TwistComposerComponent = {
           />
           <button
             @click="$refs.imageInput.click()"
-            :disabled="!username || !hasKeychain || isUploadingImage || !canUploadImage"
+            :disabled="!username || !hasKeychain || isUploadingImage || !canUploadImage || !!pendingImageUrl"
             :title="!canUploadImage ? ('Image limit reached (' + mediaLimit + ').') : ''"
-            style="padding:6px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;"
+            style="padding:6px 12px;margin:0;background:#1a1030;border:1px solid #3b1f5e;color:#c084fc;font-size:12px;min-height:44px;"
           >{{ isUploadingImage ? "Uploading…" : "📷 Upload image" }}</button>
           <span v-if="uploadError" style="font-size:12px;color:#fca5a5;">{{ uploadError }}</span>
+        </div>
+
+        <!-- D: Alt-text confirmation panel — shown after a successful upload -->
+        <div v-if="pendingImageUrl" style="
+          margin-top:8px;padding:10px 12px;border-radius:8px;
+          background:#0e1a2d;border:1px solid #1e3a5f;
+        ">
+          <label style="font-size:12px;color:#93c5fd;display:block;margin-bottom:4px;font-weight:600;">
+            🖼 Image description for screen readers
+          </label>
+          <div style="font-size:11px;color:#5a4e70;margin-bottom:6px;">
+            Describe what the image shows so visually impaired readers understand it.
+            You can leave the auto-filled filename if no better description applies.
+          </div>
+          <input
+            v-model="pendingImageAlt"
+            type="text"
+            placeholder="e.g. Sunset over Steem logo at dusk"
+            maxlength="200"
+            style="
+              width:100%;box-sizing:border-box;padding:6px 8px;border-radius:6px;
+              border:1px solid #1e3a5f;background:#0f0a1e;color:#e8e0f0;
+              font-size:13px;margin-bottom:8px;
+            "
+            @keydown.enter.prevent="insertPendingImage"
+            @keydown.escape.prevent="cancelPendingImage"
+          />
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button
+              @click="insertPendingImage"
+              style="padding:5px 14px;font-size:12px;margin:0;min-height:36px;"
+            >Insert image</button>
+            <button
+              @click="cancelPendingImage"
+              style="padding:5px 12px;font-size:12px;margin:0;min-height:36px;
+                     background:#1e1535;border:1px solid #2e2050;color:#9b8db0;"
+            >Discard</button>
+          </div>
         </div>
 
         <div

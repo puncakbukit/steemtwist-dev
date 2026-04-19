@@ -63,6 +63,9 @@
     /* Global button baseline — overridden per-component via inline styles */
     button {
       padding: 8px 14px;
+      /* A: Ensure a comfortable minimum tap height on touchscreens.
+         Individual components may override padding but should not go below this. */
+      min-height: 44px;
       margin: 5px;
       border-radius: 20px;
       border: none;
@@ -179,9 +182,13 @@
       color: var(--accent);
       border: 1px solid var(--card-border);
       border-radius: 12px;
-      padding: 2px 10px;
-      font-size: 12px;
+      /* A: Enforce 44px minimum touch target height for small toolbar chips */
+      padding: 0 12px;
+      min-height: 44px;
+      font-size: 13px;
       margin: 0;
+      display: inline-flex;
+      align-items: center;
     }
     .sb-pill-btn {
       background: var(--card);
@@ -191,6 +198,14 @@
       padding: 6px 24px;
       font-size: 13px;
       cursor: pointer;
+    }
+    /* A: Permalink icon and other icon-only touch targets: at least 44×44 px */
+    .st-touch-target {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      min-height: 44px;
     }
     .sb-pulse {
       display: flex;
