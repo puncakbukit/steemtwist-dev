@@ -165,6 +165,7 @@ const ExploreView = {
       pageSize:            20,
       monthsLoaded:        1,      // how many calendar months fetched (Twist Stream)
       loadingOlderMonth:   false,  // true while fetching an older page
+      feedExhausted:       false,  // Bug 5: set true when loadOlderMonth returns 0 new posts
       understreamCursor:   null,   // { author, permlink } cursor for Understream paging
       // Trend detection
       _trendDetector:      null,   // TrendDetector instance (non-reactive, managed manually)
@@ -195,6 +196,7 @@ const ExploreView = {
       return this.pagedTwists.length < total;
     },
     canLoadOlder() {
+      if (this.feedExhausted) return false;                // Bug 5: respect exhaustion flag
       if (this.understreamOn) return this.understreamCursor !== null;
       return true;
     }
@@ -324,7 +326,12 @@ const ExploreView = {
           const existingKeys = new Set(this.twists.map(t => postKey(t)));
           const fresh = older.filter(t => !existingKeys.has(postKey(t)));
           if (fresh.length === 0) {
-            this.notify("No twists found in that month.", "info");
+            // Bug 5 fix: mark feed as exhausted and stop the observer so the
+            // IntersectionObserver cannot re-fire immediately on an empty month,
+            // which would cause a rapid succession of pointless RPC calls.
+            this.feedExhausted = true;
+            if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
+            this.notify("No more twists to load.", "info");
           } else {
             this.twists = [...this.twists, ...fresh];
             this._trendDetector.ingestPosts(fresh);
@@ -635,6 +642,7 @@ const HomeView = {
       pageSize:            20,          // posts per page
       monthsLoaded:        1,           // how many calendar months fetched (Twist Stream)
       loadingOlderMonth:   false,       // true while fetching an older page
+      feedExhausted:       false,       // Bug 5: set true when no new posts returned
       understreamCursor:   null,        // unused for HomeView (multi-user feed)
       // Trend detection
       _trendDetector:      null,
@@ -647,7 +655,7 @@ const HomeView = {
     sortedTwists() { return sortTwists(this.twists, this.sortMode); },
     pagedTwists()  { return this.sortedTwists.slice(0, this.page * this.pageSize); },
     hasMore()      { return this.pagedTwists.length < this.sortedTwists.length; },
-    canLoadOlder() { return !this.understreamOn; }
+    canLoadOlder() { return !this.understreamOn && !this.feedExhausted; }  // Bug 5
   },
 
   async created() {
@@ -704,7 +712,11 @@ const HomeView = {
         const existingKeys = new Set(this.twists.map(t => postKey(t)));
         const fresh = olderFromFollowing.filter(t => !existingKeys.has(postKey(t)));
         if (fresh.length === 0) {
-          this.notify("No twists found in that month.", "info");
+          // Bug 5 fix: an empty month means the observer would re-fire immediately.
+          // Set the exhausted flag and disconnect so RPC calls don't spiral.
+          this.feedExhausted = true;
+          if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
+          this.notify("No more twists to load.", "info");
         } else {
           this.twists = [...this.twists, ...fresh];
           this._trendDetector.ingestPosts(fresh);
@@ -2087,7 +2099,9 @@ const SecretTwistView = {
   methods: {
     async loadPosts() {
       if (!this.username) { this.loading = false; return; }
-      await this.applyHistoryRange(0);
+      // Bug 3 fix: always fetch current + previous month by default so that
+      // replies sent on the 1st of a new month can find their Jan-31 parent.
+      await this.applyHistoryRange(1);
     },
 
     async applyHistoryRange(monthsBack) {

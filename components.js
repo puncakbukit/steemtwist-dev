@@ -34,6 +34,11 @@ function draftStorageKey(key, username = "") {
 
 const draftStorage = {
   save(key, value, username = "") {
+    // Bug 4 fix: never persist a draft when no user is logged in.
+    // An anonymous draft stored under a generic key can be read by the
+    // next person who opens the app on the same device without logging in.
+    const user = normalizeDraftUser(username) || activeDraftUser();
+    if (!user) return;
     try {
       localStorage.setItem(
         draftStorageKey(key, username),
@@ -1218,7 +1223,7 @@ const UserProfileComponent = {
           <img
             :src="safeAvatarUrl(profileData.username)"
             style="width:72px;height:72px;border-radius:50%;border:3px solid #2e2050;background:#0f0a1e;flex-shrink:0;"
-            @error="$event.target.src='https://steemitimages.com/u/guest/avatar'"
+            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
           />
           <!-- Reputation badge -->
           <div style="
@@ -1543,14 +1548,14 @@ const ReplyCardComponent = {
     showThreadGuide() { return this.depth > 0; },
     
     upvoteCount() {
-  const votes = this.reply.active_votes;
-
-  if (!votes) return this.hasVoted ? 1 : 0;
-
-  const count = votes.filter(v => v.percent > 0).length;
-
-  return count + (this.hasVoted ? 1 : 0);
-}
+      const votes = this.reply.active_votes;
+      if (!votes) return this.hasVoted ? 1 : 0;
+      const count = votes.filter(v => v.percent > 0).length;
+      // Bug 1 fix: check if the current user's vote is already in active_votes
+      // (same guard as TwistCardComponent) to prevent double-counting.
+      const alreadyCounted = this.username && votes.some(v => v.voter === this.username && v.percent > 0);
+      return count + (this.hasVoted && !alreadyCounted ? 1 : 0);
+    }
   },
   watch: {
     replyText(v) { draftStorage.save("reply_" + this.reply.permlink, v); },
@@ -1774,7 +1779,7 @@ const ReplyCardComponent = {
           <img
             :src="avatarUrl"
             style="width:28px;height:28px;border-radius:50%;border:2px solid #2e2050;"
-            @error="$event.target.src='https://steemitimages.com/u/guest/avatar/small'"
+            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
           />
         </a>
 
@@ -1982,6 +1987,7 @@ const ReplyCardComponent = {
                 padding:7px;border-radius:0 8px 8px 8px;border:1px solid #2e2050;background:#0f0a1e;color:#e8e0f0;
                 font-size:13px;resize:vertical;min-height:52px;
               "
+              @focus="$el.scrollIntoView({ behavior: 'smooth', block: 'center' })"
             ></textarea>
             <div v-show="!replyPreviewMode" style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
               <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
@@ -2821,9 +2827,13 @@ const LIVE_TWIST_HANDLER_MIXIN = {
         return _VALID_STEEM_NAME.test(s) ? s : "";
       };
       const safeActionAmount = (v) => {
-        // Accept "1.000" or "1" — reject anything that isn't a non-negative decimal string.
-        const s = safeActionStr(v, 32);
-        return /^\d+(\.\d+)?$/.test(s) ? s : "0";
+        // Bug 6 fix: force-coerce through parseFloat so the Live Twist cannot
+        // control the visual formatting of the number shown in the modal.
+        // e.g. "1000.000 STEEM" or "0.001 …1000" collapse to a clean decimal.
+        const stripped = String(v).replace(/[^0-9.]/g, "");
+        const parsed = parseFloat(stripped);
+        if (!isFinite(parsed) || parsed < 0) return "0";
+        return parsed.toFixed(3);
       };
       const ALLOWED_CURRENCIES = ["STEEM", "SBD"];
 
@@ -2956,14 +2966,18 @@ const LIVE_TWIST_HANDLER_MIXIN = {
       // Replaces confirm() with a styled overlay that clearly labels each
       // field so spoofed unicode / misleading values are visually apparent.
       const modalId = "lt-action-modal-" + Date.now();
-      const rowsHtml = rows.map(r =>
-        `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #2e2050;font-size:13px;">
+      // Bug 6 fix: truncate each value to 120 chars and use white-space:pre-wrap
+      // so unicode line-separators or excessive whitespace cannot push the real
+      // value off-screen. Values are already sanitised by safeActionStr/Amount.
+      const rowsHtml = rows.map(r => {
+        const raw = String(r.value);
+        const display = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+        const escaped = display.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #2e2050;font-size:13px;">
            <span style="color:#9b8db0;min-width:80px;flex-shrink:0;">${r.label}</span>
-           <span style="color:#e8e0f0;word-break:break-all;">${
-             String(r.value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-           }</span>
-         </div>`
-      ).join("");
+           <span style="color:#e8e0f0;word-break:break-all;white-space:pre-wrap;max-height:60px;overflow:hidden;">${escaped}</span>
+         </div>`;
+      }).join("");
 
       const overlay = document.createElement("div");
       overlay.id = modalId;
@@ -3276,6 +3290,9 @@ ${'<'}/script>
     },
 
     stop() {
+      // Bug 2 fix: wipe srcdoc first so the iframe's JS halts immediately,
+      // even before Vue removes the element via v-if on the next tick.
+      if (this.$refs.sandbox) this.$refs.sandbox.srcdoc = "";
       this.running    = false;
       this.runSeconds = 0;
       this.iframeKey++;
@@ -3992,7 +4009,7 @@ const TwistCardComponent = {
           <img
             :src="avatarUrl"
             style="width:40px;height:40px;border-radius:50%;border:2px solid #2e2050;"
-            @error="$event.target.src='https://steemitimages.com/u/guest/avatar/small'"
+            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
           />
         </a>
         <div>
@@ -4330,6 +4347,7 @@ const TwistCardComponent = {
             border:1px solid #2e2050;background:#0f0a1e;
             color:#e8e0f0;font-size:14px;resize:vertical;min-height:60px;
           "
+          @focus="$el.scrollIntoView({ behavior: 'smooth', block: 'center' })"
         ></textarea>
         <div v-show="!replyPreviewMode" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
           <input ref="replyImageInput" type="file" accept="image/*" style="display:none;" @change="onReplyImageSelected" />
@@ -5188,7 +5206,7 @@ const SignalItemComponent = {
         <img
           :src="'https://steemitimages.com/u/' + signal.actor + '/avatar/small'"
           style="width:36px;height:36px;border-radius:50%;border:2px solid #2e2050;"
-          @error="$event.target.src='https://steemitimages.com/u/guest/avatar/small'"
+          @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
         />
       </a>
 
@@ -5305,7 +5323,7 @@ const UserRowComponent = {
       <img
         :src="'https://steemitimages.com/u/' + username + '/avatar/small'"
         style="width:40px;height:40px;border-radius:50%;border:2px solid #2e2050;flex-shrink:0;"
-        @error="$event.target.src='https://steemitimages.com/u/guest/avatar/small'"
+        @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
       />
 
       <!-- Name + username + bio -->
@@ -5780,7 +5798,7 @@ const SecretTwistCardComponent = {
           <img
             :src="avatarUrl"
             style="width:40px;height:40px;border-radius:50%;border:2px solid #3b1f5e;"
-            @error="$event.target.src='https://steemitimages.com/u/guest/avatar/small'"
+            @error="if($event.target.dataset.fbk){return;}$event.target.dataset.fbk='1';$event.target.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%232e2050'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%235a4e70'/%3E%3Cellipse cx='20' cy='34' rx='12' ry='8' fill='%235a4e70'/%3E%3C/svg%3E'"
           />
         </a>
         <div style="flex:1;min-width:0;">
