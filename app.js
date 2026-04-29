@@ -475,6 +475,7 @@ const ExploreView = {
   },
 
   template: `
+    <a href="#app-main-content" class="skip-link">Skip to content</a>
     <div class="sb-view">
 
       <!-- Trending widget — shown once posts are loaded -->
@@ -487,6 +488,15 @@ const ExploreView = {
       <!-- Top bar -->
       <div class="sb-toolbar sb-toolbar-muted">
         <span>📅 <strong>{{ monthlyRoot }}</strong></span>
+        <div class="panel" style="position:sticky;top:8px;z-index:5;width:100%;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <strong style="font-size:12px;color:#e8e0f0;">Explore feed state</strong>
+            <button class="feed-state-chip btn-ghost" @click="sortMode='new'" title="Sort by newest posts">Sort: {{ sortMode.toUpperCase() }}</button>
+            <button class="feed-state-chip btn-ghost" @click="toggleUnderstream(); loadFeed(true)" title="Toggle Understream mode">Understream {{ understreamOn ? 'ON' : 'OFF' }}</button>
+            <button class="feed-state-chip btn-ghost" @click="toggleFirehose" title="Toggle Firehose real-time stream">Firehose {{ firehoseOn ? 'ON' : 'OFF' }}</button>
+            <button class="feed-state-chip btn-ghost" @click="loadFeed(true)" title="Reset and refresh current feed">Reset</button>
+          </div>
+        </div>
 
         <button
           @click="loadFeed(true)"
@@ -954,6 +964,15 @@ const HomeView = {
       <div class="sb-toolbar">
         <span style="color:#e8e0f0;font-weight:600;font-size:15px;">🏠 Home</span>
         <span style="color:#5a4e70;font-size:12px;">Twists from Twisters you follow</span>
+        <div class="panel" style="position:sticky;top:8px;z-index:5;width:100%;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <strong style="font-size:12px;color:#e8e0f0;">Home feed state</strong>
+            <button class="feed-state-chip btn-ghost" @click="sortMode='new'" title="Sort by newest posts">Sort: {{ sortMode.toUpperCase() }}</button>
+            <button class="feed-state-chip btn-ghost" @click="toggleUnderstream(); loadFeed()" title="Toggle Understream mode">Understream {{ understreamOn ? 'ON' : 'OFF' }}</button>
+            <button class="feed-state-chip btn-ghost" @click="toggleFirehose" title="Toggle Firehose real-time stream">Firehose {{ firehoseOn ? 'ON' : 'OFF' }}</button>
+            <button class="feed-state-chip btn-ghost" @click="loadFeed()" title="Reset and refresh current feed">Reset</button>
+          </div>
+        </div>
 
         <button
           @click="loadFeed"
@@ -2687,6 +2706,13 @@ const App = {
           <router-link to="/about" exact-active-class="nav-active"
             style="color:#fff;text-decoration:none;padding:5px 12px;border-radius:20px;font-size:14px;font-weight:500;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);"
           >About</router-link>
+          <button
+            class="btn-ghost"
+            @click="document.body.classList.toggle('reduce-live-motion')"
+            title="Reduce live highlight intensity"
+            aria-label="Reduce live highlight intensity"
+            style="margin:0;"
+          >🫧 Reduce motion</button>
 
           <template v-if="!username">
             <button
@@ -2783,7 +2809,7 @@ const App = {
     ></app-notification-component>
 
     <!-- Page content -->
-    <div style="padding:0 16px 40px;">
+    <div id="app-main-content" style="padding:0 16px 40px;">
       <router-view></router-view>
     </div>
   `

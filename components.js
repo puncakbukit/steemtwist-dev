@@ -4742,6 +4742,12 @@ const LiveTwistComposerComponent = {
           Mono-spacing
         </label>
       </div>
+      <div style="margin:0 0 10px;padding:8px;border:1px solid #2e2050;border-radius:8px;background:#0f0a1e;color:#9b8db0;font-size:12px;">
+        Safe run checklist: <strong style="color:#e8e0f0;">no network</strong> ·
+        <strong style="color:#e8e0f0;">sanitized output</strong> ·
+        <strong style="color:#e8e0f0;">size limits</strong>.
+        <span style="color:#5a4e70;">Templates: Beginner / Intermediate / Advanced.</span>
+      </div>
 
       <!-- Code editor -->
       <textarea v-show="activeTab === 'code'" v-model="code"
@@ -4907,6 +4913,9 @@ const TwistComposerComponent = {
       // D: After a successful upload, hold the URL here until the user confirms alt text
       pendingImageUrl:  null,
       pendingImageAlt:  "",
+      showFirstRunGuide: (() => {
+        try { return localStorage.getItem("st_first_run_done") !== "1"; } catch { return true; }
+      })(),
     };
   },
   computed: {
@@ -5007,6 +5016,8 @@ const TwistComposerComponent = {
       }
       if (!this.canPost) return;
       this.$emit("post", this.message.trim());
+      try { localStorage.setItem("st_first_run_done", "1"); } catch {}
+      this.showFirstRunGuide = false;
       this.message     = "";
       this.previewMode = false;
       draftStorage.clear("twist_composer");
@@ -5018,6 +5029,19 @@ const TwistComposerComponent = {
   },
   template: `
     <div style="margin:0 auto 20px;max-width:600px;">
+      <div v-if="showFirstRunGuide" class="panel" style="margin-bottom:10px;">
+        <div style="font-weight:700;color:#e8e0f0;margin-bottom:6px;">👋 Quick start (first session)</div>
+        <ol style="margin:0 0 8px 18px;padding:0;color:#b8adc9;font-size:13px;line-height:1.5;">
+          <li>Post your first twist from this composer.</li>
+          <li>Switch <b>Write</b> / <b>Preview</b> before publishing.</li>
+          <li>Use ❤️ and 💬 on any card to engage.</li>
+          <li>Advanced: Firehose and Understream are optional feed modes.</li>
+        </ol>
+        <button class="btn-ghost" @click="showFirstRunGuide = false" style="margin:0;">Got it</button>
+      </div>
+      <div style="margin-bottom:8px;color:#9b8db0;font-size:12px;">
+        <strong style="color:#e8e0f0;">Create</strong> · publish and build twists. <strong style="color:#e8e0f0;">Discover</strong> · browse Home/Explore streams.
+      </div>
 
       <!-- Mode selector: Twist | Live Twist -->
       <div style="display:flex;gap:4px;margin-bottom:-1px;position:relative;z-index:1;">
