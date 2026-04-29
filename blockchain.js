@@ -7,10 +7,10 @@
 // ---- RPC nodes & fallback ----
 
 const RPC_NODES = [
-  "https://api.steemit.com"
-  // "https://api.justyy.com",
-  // "https://steemd.steemworld.org",
-  // "https://api.steem.fans"
+  "https://api.steemit.com",
+  "https://api.justyy.com",
+  "https://steemd.steemworld.org",
+  "https://api.steem.fans"
 ];
 
 let currentRPCIndex = 0;
@@ -91,7 +91,7 @@ function fetchAccount(username) {
       return setAccountCached(key, value);
     }
 
-    steem.api.getAccounts([username], (err, result) => {
+    callWithFallback(steem.api.getAccounts, [[username]], (err, result) => {
       if (err || !result || !result.length) return resolve(setCached(null));
       const account = result[0];
       let profile = {};
@@ -125,7 +125,7 @@ function fetchAccount(username) {
       }
 
       // Fetch follower/following counts in parallel with account data
-      steem.api.getFollowCount(account.name, (fcErr, fc) => {
+      callWithFallback(steem.api.getFollowCount, [account.name], (fcErr, fc) => {
         const normalized = {
           username:       account.name,
           profileImage:   sanitizeImageUrl(profile.profile_image),
