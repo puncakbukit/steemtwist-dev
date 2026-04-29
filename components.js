@@ -3119,10 +3119,11 @@ const LiveTwistComponent = {
          font-size:14px; background:#0f0a1e; color:#e8e0f0;
          box-sizing:border-box; word-break:break-word; }
   * { box-sizing:border-box; }
-  button { cursor:pointer; padding:5px 12px; border-radius:6px;
-           background:#6d28d9; color:#fff; border:none; font-size:13px; }
-  input,textarea { background:#1a1030; color:#e8e0f0; border:1px solid #3b1f5e;
-                   border-radius:6px; padding:5px 8px; font-size:13px; width:100%; }
+  button { cursor:pointer; padding:10px 14px; border-radius:8px;
+           background:#6d28d9; color:#fff; border:none; font-size:14px; min-width:44px; min-height:44px; }
+  input,textarea,select { background:#1a1030; color:#e8e0f0; border:1px solid #3b1f5e;
+                   border-radius:8px; padding:10px 10px; font-size:14px; width:100%; min-height:44px; }
+  label, th, td, p, li, span, a { font-size:14px; }
   #_console { margin-top:8px; padding:6px; background:#0a0616;
               border-radius:6px; font-family:monospace; font-size:12px;
               color:#9b8db0; max-height:80px; overflow-y:auto;
@@ -3151,6 +3152,19 @@ const purify = DOMPurify;
     // Sandbox is already fully isolated — return html as-is when DOMPurify unavailable
     return html;
   }
+  function normalizeA11y() {
+    const ctrls = _root.querySelectorAll("button,input,select,textarea,a,[role='button']");
+    ctrls.forEach((el, i) => {
+      if (!el.getAttribute("aria-label")) {
+        const t = (el.textContent || el.getAttribute("title") || el.getAttribute("placeholder") || "").trim();
+        el.setAttribute("aria-label", t || ("Control " + (i + 1)));
+      }
+      if (el.tagName === "A" && !el.getAttribute("role")) el.setAttribute("role", "button");
+      el.style.minWidth = "44px";
+      el.style.minHeight = "44px";
+      if (parseFloat((el.style.fontSize || "0")) && parseFloat(el.style.fontSize) < 14) el.style.fontSize = "14px";
+    });
+  }
 
   // ── Restricted API exposed to Live Twist code ─────────────────
   const _cons = document.getElementById("_console");
@@ -3159,6 +3173,7 @@ const purify = DOMPurify;
   const app = {
     render(html) {
       _root.innerHTML = sanitize(String(html));
+      normalizeA11y();
       // Resize after a microtask so the DOM has fully settled before measuring.
       setTimeout(function() {
         var h = document.body.scrollHeight;
@@ -3167,6 +3182,7 @@ const purify = DOMPurify;
     },
     text(str) {
       _root.textContent = String(str).slice(0, 2000);
+      normalizeA11y();
     },
     resize(h) {
       const height = Math.min(Math.max(parseInt(h) || 200, 40), 600);
@@ -4601,9 +4617,10 @@ const LiveTwistComposerComponent = {
         "function sanitize(h){if(typeof h!=='string')return '';if(purify)return purify.sanitize(h,_purifyConfig);return h.replace(/<script[\\s\\S]*?<\\/script>/gi,'');}" +
         "var _log=document.getElementById('_log');" +
         "var _root=document.getElementById('_root');" +
+        "function normalizeA11y(){var c=_root.querySelectorAll('button,input,select,textarea,a,[role=\"button\"]');for(var i=0;i<c.length;i++){var el=c[i];if(!el.getAttribute('aria-label')){var t=(el.textContent||el.getAttribute('title')||el.getAttribute('placeholder')||'').trim();el.setAttribute('aria-label',t||('Control '+(i+1)));}if(el.tagName==='A'&&!el.getAttribute('role'))el.setAttribute('role','button');el.style.minWidth='44px';el.style.minHeight='44px';var fs=parseFloat(el.style.fontSize||'0');if(fs&&fs<14)el.style.fontSize='14px';}}" +
         "var app={" +
-        "render:function(h){_root.innerHTML=sanitize(String(h));setTimeout(function(){var rh=document.body.scrollHeight;if(rh>40)parent.postMessage({type:'resize',height:rh+16},PARENT_ORIGIN);},0);}," +
-        "text:function(s){_root.textContent=String(s).slice(0,2000);}," +
+        "render:function(h){_root.innerHTML=sanitize(String(h));normalizeA11y();setTimeout(function(){var rh=document.body.scrollHeight;if(rh>40)parent.postMessage({type:'resize',height:rh+16},PARENT_ORIGIN);},0);}," +
+        "text:function(s){_root.textContent=String(s).slice(0,2000);normalizeA11y();}," +
         "resize:function(h){var px=Math.min(Math.max(parseInt(h)||200,40),600);parent.postMessage({type:'resize',height:px},PARENT_ORIGIN);}," +
         "log:function(){var a=Array.prototype.slice.call(arguments);_log.style.display='block';var l=document.createElement('div');l.textContent=a.map(function(x){return typeof x==='object'?JSON.stringify(x):String(x);}).join(' ');_log.appendChild(l);_log.scrollTop=_log.scrollHeight;}," +
 		"query:function(type,params){params=params||{};parent.postMessage({type:'LIVE_TWIST_QUERY',queryType:type,params:params},PARENT_ORIGIN);}," +

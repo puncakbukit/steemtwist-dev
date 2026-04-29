@@ -1496,7 +1496,11 @@ const AboutView = {
       const res  = await fetch("README.md");
       if (!res.ok) throw new Error(res.statusText);
       const text = await res.text();
-      this.html  = DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }));
+      let rendered = DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }));
+      // Responsive table wrapper for narrow screens.
+      rendered = rendered.replace(/<table>/g, '<div class="table-scroll"><table>');
+      rendered = rendered.replace(/<\/table>/g, '</table></div>');
+      this.html  = rendered;
     } catch (e) {
       this.notify("Could not load README.md.", "error");
     }
@@ -2372,6 +2376,8 @@ const App = {
       const path = currentRoute.path || "";
       return path === "/" || path === "/feed" || path.startsWith("/explore");
     });
+    let rpcErrorHandler = null;
+    let rpcSwitchedHandler = null;
 
     function notify(message, type = "error") {
       notification.value = { message, type };
@@ -2423,9 +2429,21 @@ const App = {
       }, 100);
       updateHeaderCollapse();
       window.addEventListener("scroll", updateHeaderCollapse, { passive: true });
+      rpcErrorHandler = (event) => {
+        const url = event?.detail?.url || "current node";
+        notify(`RPC connection issue on ${url}. Trying fallback node…`, "info");
+      };
+      rpcSwitchedHandler = (event) => {
+        const url = event?.detail?.url || "fallback node";
+        notify(`Switched RPC node to ${url}`, "info");
+      };
+      window.addEventListener("steemtwist:rpc-error", rpcErrorHandler);
+      window.addEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
     });
     onUnmounted(() => {
       window.removeEventListener("scroll", updateHeaderCollapse);
+      if (rpcErrorHandler) window.removeEventListener("steemtwist:rpc-error", rpcErrorHandler);
+      if (rpcSwitchedHandler) window.removeEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
     });
 
     function login(user) {

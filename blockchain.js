@@ -21,6 +21,11 @@ function setRPC(index) {
     url: RPC_NODES[index]
   });
   console.log("Switched RPC to:", RPC_NODES[index]);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("steemtwist:rpc-switched", {
+      detail: { index, url: RPC_NODES[index] }
+    }));
+  }
 }
 
 // Safe API wrapper with automatic RPC fallback on error.
@@ -28,6 +33,11 @@ function callWithFallback(apiCall, args, callback, attempt = 0) {
   apiCall(...args, (err, result) => {
     if (!err) return callback(null, result);
     console.warn("RPC error on", RPC_NODES[currentRPCIndex], err);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("steemtwist:rpc-error", {
+        detail: { index: currentRPCIndex, url: RPC_NODES[currentRPCIndex], error: String(err && err.message ? err.message : err) }
+      }));
+    }
     const nextIndex = currentRPCIndex + 1;
     if (nextIndex >= RPC_NODES.length) return callback(err, null);
     setRPC(nextIndex);
@@ -2555,4 +2565,3 @@ class TrendDetector {
     return this._clusterWords(wordTrends, threshold).slice(0, topN);
   }
 }
-
