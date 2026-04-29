@@ -204,9 +204,12 @@ const ExploreView = {
 
   watch: {
     sortMode() { this.page = 1; },
-    // When the computed monthlyRoot flips (month rollover), reload the feed
-    // automatically so users don't stay stuck on a stale month.
-    monthlyRoot() { this.loadFeed(true); }
+    // Delay month rollover refresh until explicit user action.
+    monthlyRoot(next, prev) {
+      if (prev && next && next !== prev) {
+        this.notify(`New month stream available (${next}). Tap Refresh to load it.`, "info");
+      }
+    }
   },
 
   async created() {
@@ -225,6 +228,7 @@ const ExploreView = {
     if (this._trendDetector) this._trendDetector.destroy();
     // B: Disconnect the IntersectionObserver to avoid leaks.
     if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
+    if (this._scrollStallTimer) { clearInterval(this._scrollStallTimer); this._scrollStallTimer = null; }
   },
 
   methods: {
@@ -441,9 +445,11 @@ const ExploreView = {
     //  • If all in-memory posts are shown AND older content exists, load it from chain.
     _setupInfiniteScroll() {
       if (typeof IntersectionObserver === "undefined") return;
+      this._scrollLastProgressTs = Date.now();
       this._scrollObserver = new IntersectionObserver(
         (entries) => {
           if (!entries[0].isIntersecting) return;
+          this._scrollLastProgressTs = Date.now();
           if (this.hasMore) {
             this.page++;
           } else if (this.canLoadOlder && !this.loadingOlderMonth) {
@@ -456,6 +462,15 @@ const ExploreView = {
         const sentinel = this.$refs.scrollSentinel;
         if (sentinel) this._scrollObserver.observe(sentinel);
       });
+      this._scrollStallTimer = setInterval(() => {
+        if (!this.canLoadOlder || this.loadingOlderMonth) return;
+        if ((Date.now() - (this._scrollLastProgressTs || 0)) > 20000) {
+          console.warn("[SteemTwist][telemetry] explore-scroll-stall", {
+            hasMore: this.hasMore, canLoadOlder: this.canLoadOlder, page: this.page
+          });
+          this._scrollLastProgressTs = Date.now();
+        }
+      }, 10000);
     }
   },
 
@@ -475,7 +490,7 @@ const ExploreView = {
 
         <button
           @click="loadFeed(true)"
-          class="sb-chip-btn"
+          class="sb-chip-btn btn-ghost focusable-action"
         >⟳ Refresh</button>
 
         <!-- Understream toggle -->
@@ -600,14 +615,17 @@ const ExploreView = {
           @deleted="p => twists = twists.filter(t => t.permlink !== p.permlink)"
         ></twist-card-component>
 
-        <!-- B: Infinite scroll sentinel — replaces the "Load more" button.
-             The IntersectionObserver in _setupInfiniteScroll() watches this element
-             and auto-advances the page or fetches older months when it enters view. -->
+        <!-- B: Infinite scroll sentinel -->
         <div ref="scrollSentinel" style="height:1px;"></div>
 
-        <!-- Fallback: manual "Load older months" only while actively fetching -->
-        <div v-if="loadingOlderMonth" class="sb-pagination">
-          <span class="sb-pill-btn" style="opacity:0.6;cursor:default;">Loading…</span>
+        <!-- Manual fallback always available -->
+        <div class="sb-pagination">
+          <button
+            type="button"
+            class="sb-pill-btn btn-ghost focusable-action"
+            @click="hasMore ? page++ : loadOlderMonth()"
+            :disabled="loadingOlderMonth || (!hasMore && !canLoadOlder)"
+          >{{ loadingOlderMonth ? "Loading…" : (hasMore ? "Load more" : "Load older months") }}</button>
         </div>
       </template>
 
@@ -673,6 +691,7 @@ const HomeView = {
     this._stopDecayTimer();
     if (this._trendDetector) this._trendDetector.destroy();
     if (this._scrollObserver) { this._scrollObserver.disconnect(); this._scrollObserver = null; }
+    if (this._scrollStallTimer) { clearInterval(this._scrollStallTimer); this._scrollStallTimer = null; }
   },
 
   watch: {
@@ -892,9 +911,11 @@ const HomeView = {
     // B: Infinite scroll helper (same pattern as ExploreView)
     _setupInfiniteScroll() {
       if (typeof IntersectionObserver === "undefined") return;
+      this._scrollLastProgressTs = Date.now();
       this._scrollObserver = new IntersectionObserver(
         (entries) => {
           if (!entries[0].isIntersecting) return;
+          this._scrollLastProgressTs = Date.now();
           if (this.hasMore) {
             this.page++;
           } else if (this.canLoadOlder && !this.loadingOlderMonth) {
@@ -907,6 +928,15 @@ const HomeView = {
         const sentinel = this.$refs.scrollSentinel;
         if (sentinel) this._scrollObserver.observe(sentinel);
       });
+      this._scrollStallTimer = setInterval(() => {
+        if (!this.canLoadOlder || this.loadingOlderMonth) return;
+        if ((Date.now() - (this._scrollLastProgressTs || 0)) > 20000) {
+          console.warn("[SteemTwist][telemetry] home-scroll-stall", {
+            hasMore: this.hasMore, canLoadOlder: this.canLoadOlder, page: this.page
+          });
+          this._scrollLastProgressTs = Date.now();
+        }
+      }, 10000);
     }
   },
 
@@ -927,7 +957,7 @@ const HomeView = {
 
         <button
           @click="loadFeed"
-          class="sb-chip-btn"
+          class="sb-chip-btn btn-ghost focusable-action"
         >⟳ Refresh</button>
 
         <!-- Understream toggle -->
@@ -1060,8 +1090,13 @@ const HomeView = {
 
         <!-- B: Infinite scroll sentinel -->
         <div ref="scrollSentinel" style="height:1px;"></div>
-        <div v-if="loadingOlderMonth" class="sb-pagination">
-          <span class="sb-pill-btn" style="opacity:0.6;cursor:default;">Loading…</span>
+        <div class="sb-pagination">
+          <button
+            type="button"
+            class="sb-pill-btn btn-ghost focusable-action"
+            @click="hasMore ? page++ : loadOlderMonth()"
+            :disabled="loadingOlderMonth || (!hasMore && !canLoadOlder)"
+          >{{ loadingOlderMonth ? "Loading…" : (hasMore ? "Load more" : "Load older months") }}</button>
         </div>
       </template>
 
@@ -1778,7 +1813,7 @@ const SocialView = {
 
       // The logged-in user's own following list (for Follow buttons)
       myFollowing:     [],
-
+      followSyncing:   {},
       profiles:        {},
       loading:         true
     };
@@ -1942,6 +1977,10 @@ const SocialView = {
     },
     handleUnfollow(user) {
       this.myFollowing = this.myFollowing.filter(u => u !== user);
+    },
+    handleFollowSync(evt) {
+      if (!evt || !evt.user) return;
+      this.followSyncing = { ...this.followSyncing, [evt.user]: !!evt.syncing };
     }
   },
 
@@ -2001,6 +2040,7 @@ const SocialView = {
             :is-following="myFollowingSet.has(user)"
             @follow="handleFollow"
             @unfollow="handleUnfollow"
+            @syncing="handleFollowSync"
           ></user-row-component>
         </div>
 
@@ -2382,6 +2422,10 @@ const App = {
     function notify(message, type = "error") {
       notification.value = { message, type };
     }
+    function notifyCritical(message, context = "") {
+      const suffix = context ? ` (${context})` : "";
+      notify(`${message}${suffix}. Please retry. If it persists, refresh or switch RPC.`, "error");
+    }
     function dismissNotification() {
       notification.value = { message: "", type: "error" };
     }
@@ -2391,7 +2435,10 @@ const App = {
     // always has a cover image and identity rather than showing empty.
     async function loadProfile(user) {
       const target = user || TWIST_CONFIG.ROOT_ACCOUNT;
-      profileData.value = await fetchAccount(target).catch(() => null);
+      profileData.value = await fetchAccount(target).catch(() => {
+        notifyCritical("Could not load profile data", "profile");
+        return null;
+      });
     }
 
     function updateHeaderCollapse() {
@@ -2439,14 +2486,25 @@ const App = {
         const url = event?.detail?.url || "fallback node";
         notify(`Switched RPC node to ${url}`, "info");
       };
+      const cspHandler = (event) => {
+        if (event?.violatedDirective && String(event.violatedDirective).includes("connect-src")) {
+          notify("A network request was blocked by browser security policy (CSP). Some actions may fail.", "error");
+        }
+      };
       window.addEventListener("steemtwist:rpc-error", rpcErrorHandler);
       window.addEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
+      window.addEventListener("securitypolicyviolation", cspHandler);
+      window.__steemtwistCspHandler = cspHandler;
     });
     onUnmounted(() => {
       if (draftGcInterval) { clearInterval(draftGcInterval); draftGcInterval = null; }
       window.removeEventListener("scroll", updateHeaderCollapse);
       if (rpcErrorHandler) window.removeEventListener("steemtwist:rpc-error", rpcErrorHandler);
       if (rpcSwitchedHandler) window.removeEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
+      if (window.__steemtwistCspHandler) {
+        window.removeEventListener("securitypolicyviolation", window.__steemtwistCspHandler);
+        window.__steemtwistCspHandler = null;
+      }
     });
 
     function login(user) {
@@ -2520,6 +2578,7 @@ const App = {
     provide("username",         username);
     provide("hasKeychain",      hasKeychain);
     provide("notify",           notify);
+    provide("notifyCritical",   notifyCritical);
     provide("unreadSignals",    unreadSignals);
     provide("understreamOn",    understreamOn);
     provide("toggleUnderstream", toggleUnderstream);

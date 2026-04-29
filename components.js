@@ -5303,7 +5303,7 @@ const UserRowComponent = {
     hasKeychain:  { type: Boolean, default: false },
     isFollowing:  { type: Boolean, default: false }  // is loggedInUser following this user?
   },
-  emits: ["follow", "unfollow"],
+  emits: ["follow", "unfollow", "syncing"],
   data() {
     return {
       followState:  this.isFollowing,   // local optimistic state
@@ -5330,8 +5330,10 @@ const UserRowComponent = {
       if (this.isBusy) return;
       this.isBusy = true;
       const action = this.followState ? unfollowUser : followUser;
+      this.$emit("syncing", { user: this.username, syncing: true });
       action(this.loggedInUser, this.username, (res) => {
         this.isBusy = false;
+        this.$emit("syncing", { user: this.username, syncing: false });
         if (res.success) {
           this.followState = !this.followState;
           this.$emit(this.followState ? "follow" : "unfollow", this.username);
@@ -5342,6 +5344,7 @@ const UserRowComponent = {
   template: `
     <a
       :href="profileUrl"
+      class="focusable-action"
       style="
         display:flex;align-items:center;gap:12px;
         padding:10px 14px;
@@ -5386,7 +5389,7 @@ const UserRowComponent = {
           borderColor: followState ? '#166534' : 'transparent',
           cursor:      isBusy ? 'default' : 'pointer'
         }"
-      >{{ isBusy ? '…' : (followState ? 'Following' : 'Follow') }}</button>
+      >{{ isBusy ? 'Syncing…' : (followState ? 'Following' : 'Follow') }}</button>
 
       <!-- Arrow (when no follow button) -->
       <span v-else style="color:#2e2050;font-size:16px;flex-shrink:0;">›</span>

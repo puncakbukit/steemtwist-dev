@@ -60,12 +60,54 @@
 
     h1 { margin-top: 20px; }
 
-    /* Global button baseline — overridden per-component via inline styles */
+    /* Shared touch target token */
+    button,
+    [role="button"],
+    .focusable-action {
+      min-height: 44px;
+    }
+
+    /* Semantic button variants */
+    .btn-primary {
+      padding: 8px 14px;
+      margin: 5px;
+      border-radius: 20px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--grad-mid), var(--grad-end));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .btn-ghost {
+      padding: 8px 14px;
+      margin: 5px;
+      border-radius: 20px;
+      border: 1px solid var(--card-border);
+      cursor: pointer;
+      background: var(--card);
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .btn-danger {
+      padding: 8px 14px;
+      margin: 5px;
+      border-radius: 20px;
+      border: 1px solid #7f1d1d;
+      cursor: pointer;
+      background: #2d0a0a;
+      color: #fca5a5;
+      font-size: 14px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+
+    /* Legacy baseline for any unclassified button */
     button {
       padding: 8px 14px;
-      /* A: Ensure a comfortable minimum tap height on touchscreens.
-         Individual components may override padding but should not go below this. */
-      min-height: 44px;
       margin: 5px;
       border-radius: 20px;
       border: none;
