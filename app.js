@@ -2402,11 +2402,13 @@ const App = {
       headerCollapsed.value = window.scrollY > 56;
     }
 
+    let draftGcInterval = null;
+
     onMounted(() => {
       setRPC(0);
       if (typeof draftStorage !== "undefined" && typeof draftStorage.gcAll === "function") {
         draftStorage.gcAll();
-        setInterval(() => draftStorage.gcAll(), 30 * 60 * 1000);
+        draftGcInterval = setInterval(() => draftStorage.gcAll(), 30 * 60 * 1000);
       }
       // Always load a profile — logged-in user's own, or @steemtwist as fallback
       loadProfile(username.value);
@@ -2441,6 +2443,7 @@ const App = {
       window.addEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
     });
     onUnmounted(() => {
+      if (draftGcInterval) { clearInterval(draftGcInterval); draftGcInterval = null; }
       window.removeEventListener("scroll", updateHeaderCollapse);
       if (rpcErrorHandler) window.removeEventListener("steemtwist:rpc-error", rpcErrorHandler);
       if (rpcSwitchedHandler) window.removeEventListener("steemtwist:rpc-switched", rpcSwitchedHandler);
@@ -2708,8 +2711,8 @@ const App = {
     <!-- Keychain not detected -->
     <div v-if="keychainReady && !hasKeychain" class="keychain-notice" style="text-align:center;">
       <strong style="color:#a855f7;">Read-only mode</strong> — Install the
-      <a href="https://www.google.com/search?q=steem+keychain+browser+extension" target="_blank"
-         rel="noopener" style="color:#22d3ee;">Steem Keychain</a>
+      <a href="https://steem-keychain.com/" target="_blank"
+         rel="noopener noreferrer" style="color:#22d3ee;">Steem Keychain</a>
       browser extension to post twists and give twist love.
     </div>
 
