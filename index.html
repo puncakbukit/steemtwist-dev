@@ -44,8 +44,8 @@
       --accent-cyan:  #22d3ee;
       --accent-pink:  #ec4899;
       --text:         #e8e0f0;
-      --text-muted:   #9b8db0;
-      --text-faint:   #8a7ea6;
+      --text-muted:   #b8adc9;
+      --text-faint:   #a599bb;
       --green-hi:     #4ade80;
       --green-lo:     #166534;
     }
@@ -78,6 +78,18 @@
     }
     button:hover   { opacity: 0.88; }
     button:disabled { opacity: 0.35; cursor: not-allowed; }
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    [role="button"]:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid var(--accent-cyan);
+      outline-offset: 2px;
+      box-shadow: 0 0 0 2px rgba(15, 10, 30, 0.95);
+      border-radius: 8px;
+    }
 
     hr { margin: 30px 0; border: none; border-top: 1px solid var(--card-border); }
 
@@ -198,6 +210,14 @@
       padding: 6px 24px;
       font-size: 13px;
       cursor: pointer;
+    }
+    .st-compact-btn {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 8px 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     /* A: Permalink icon and other icon-only touch targets: at least 44×44 px */
     .st-touch-target {
